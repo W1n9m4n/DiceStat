@@ -37,10 +37,14 @@
     const startBtn = document.getElementById("startBtn");
 
     async function startCamera() {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
-      video.srcObject = stream;
-      await video.play();
-      detectLoop();
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
+        video.srcObject = stream;
+        await video.play();
+        detectLoop();
+      } catch (err) {
+        currentCountDiv.textContent = `Camera access error: ${err.message}`;
+      }
     }
 
     async function detectLoop() {

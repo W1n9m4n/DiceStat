@@ -31,6 +31,7 @@
       overflow: hidden;
       margin-bottom: 1rem;
       aspect-ratio: 4 / 3;
+      background: #000;
     }
 
     video, canvas {
@@ -47,7 +48,7 @@
     }
 
     #startBtn {
-      margin-bottom: 0.8rem;
+      margin-bottom: 1rem;
       padding: 0.6rem 1.2rem;
       font-size: 1rem;
       background-color: #007bff;
@@ -58,15 +59,14 @@
     }
 
     #status {
-      color: #333;
       margin-bottom: 1rem;
+      color: #333;
       font-size: 1rem;
-      text-align: center;
     }
 
     #history {
       width: 100%;
-      max-width: 480px;
+      max-width: 320px;
       background: white;
       border: 1px solid #ccc;
       border-radius: 5px;
@@ -84,12 +84,12 @@
 </head>
 <body>
   <h2>Dice Detector</h2>
+  <button id="startBtn">Start Camera</button>
   <div id="video-container">
     <video id="video" autoplay muted playsinline></video>
     <canvas id="overlay"></canvas>
   </div>
-  <button id="startBtn">Start Camera</button>
-  <div id="status"></div>
+  <div id="status">Status: Waiting</div>
   <div id="history"></div>
   <canvas id="canvas" style="display: none;"></canvas>
 
@@ -105,11 +105,10 @@
 
     const API_URL = "https://detect.roboflow.com/dice-value-identification/1";
     const API_KEY = "hcMpxDXEVyytWxlYcR00";
-    const CONFIDENCE_THRESHOLD = 0.7;
 
     startBtn.addEventListener("click", async () => {
       startBtn.disabled = true;
-      status.textContent = "Requesting camera access...";
+      status.textContent = "Requesting camera...";
 
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
@@ -121,12 +120,12 @@
           overlay.width = video.videoWidth;
           overlay.height = video.videoHeight;
 
-          setInterval(runDetection, 2000);
+          setInterval(runDetection, 2500);
           status.textContent = "Camera started.";
         };
       } catch (err) {
         console.error("Camera error:", err);
-        status.textContent = "Camera access denied or unavailable.";
+        status.textContent = "Camera error: " + err.message;
       }
     });
 
@@ -146,16 +145,13 @@
         });
 
         const result = await res.json();
-        console.log("Roboflow result:", result);
-
-        if (!result || !result.predictions || !Array.isArray(result.predictions)) {
-          status.textContent = "No predictions found.";
+        if (!result || !Array.isArray(result.predictions)) {
+          status.textContent = "No predictions.";
           return;
         }
 
         drawPredictions(result.predictions);
         logRoll(result.predictions);
-
       } catch (err) {
         console.error("Detection error:", err);
         status.textContent = "Detection error: " + err.message;
@@ -166,31 +162,26 @@
       overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
       overlayCtx.strokeStyle = "red";
       overlayCtx.lineWidth = 2;
-      overlayCtx.font = "20px Arial";
       overlayCtx.fillStyle = "red";
+      overlayCtx.font = "16px Arial";
 
       predictions.forEach(pred => {
-        if (pred.confidence < CONFIDENCE_THRESHOLD) return;
+        if (pred.confidence < 0.7) return;
 
         const x = pred.x - pred.width / 2;
         const y = pred.y - pred.height / 2;
-        const w = pred.width;
-        const h = pred.height;
-        const label = pred.class;
-
-        overlayCtx.strokeRect(x, y, w, h);
-        overlayCtx.fillText(label, x + 5, y + 20);
+        overlayCtx.strokeRect(x, y, pred.width, pred.height);
+        overlayCtx.fillText(pred.class, x + 4, y + 18);
       });
     }
 
     function logRoll(predictions) {
       const values = predictions
-        .filter(p => p.confidence >= CONFIDENCE_THRESHOLD)
-        .map(p => parseInt(p.class))
-        .filter(n => !isNaN(n))
+        .filter(p => p.confidence >= 0.7)
+        .map(p => p.class)
         .sort();
 
-      if (values.length === 0) return;
+      if (!values.length) return;
 
       const div = document.createElement("div");
       div.className = "roll";

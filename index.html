@@ -54,6 +54,25 @@
       text-align: center;
       display: none;
     }
+    #numberHistory {
+      margin-top: 1.5rem;
+      width: 100%;
+      max-width: 480px;
+    }
+    #numberHistory h3 {
+      margin-bottom: 0.5rem;
+    }
+    #historyList {
+      list-style: none;
+      padding-left: 0;
+    }
+    #historyList li {
+      background: white;
+      padding: 0.5rem;
+      margin-bottom: 0.3rem;
+      border-left: 4px solid red;
+      font-size: 1.1rem;
+    }
   </style>
 </head>
 <body>
@@ -63,12 +82,19 @@
   <p id="message" class="message"></p>
   <div id="numberBox"></div>
 
+  <!-- NEW: Number history list -->
+  <div id="numberHistory">
+    <h3>Detected Numbers</h3>
+    <ul id="historyList"></ul>
+  </div>
+
   <script>
     const video = document.getElementById('video');
     const canvas = document.getElementById('canvas');
     const message = document.getElementById('message');
     const button = document.getElementById('startBtn');
     const numberBox = document.getElementById('numberBox');
+    const historyList = document.getElementById('historyList');
 
     let streamStarted = false;
 
@@ -114,19 +140,17 @@
       canvas.height = video.videoHeight;
       context.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-      // Grayscale + contrast enhancement preprocessing
+      // Grayscale + contrast
       const imgData = context.getImageData(0, 0, canvas.width, canvas.height);
       for (let i = 0; i < imgData.data.length; i += 4) {
         const avg = (imgData.data[i] + imgData.data[i + 1] + imgData.data[i + 2]) / 3;
-        imgData.data[i] = avg;
-        imgData.data[i + 1] = avg;
-        imgData.data[i + 2] = avg;
+        imgData.data[i] = imgData.data[i + 1] = imgData.data[i + 2] = avg;
       }
-      const factor = 1.5; // contrast factor, tweak if needed
+      const factor = 1.5;
       for (let i = 0; i < imgData.data.length; i += 4) {
-        imgData.data[i] = Math.min(255, factor * (imgData.data[i] - 128) + 128);
-        imgData.data[i + 1] = Math.min(255, factor * (imgData.data[i + 1] - 128) + 128);
-        imgData.data[i + 2] = Math.min(255, factor * (imgData.data[i + 2] - 128) + 128);
+        for (let j = 0; j < 3; j++) {
+          imgData.data[i + j] = Math.min(255, factor * (imgData.data[i + j] - 128) + 128);
+        }
       }
       context.putImageData(imgData, 0, 0);
 
@@ -143,9 +167,15 @@
         const text = result.data.text.trim();
         const digitsOnly = text.match(/\d+/g);
         if (digitsOnly && digitsOnly.length > 0) {
+          const numberString = digitsOnly.join(', ');
           message.textContent = 'Detected number(s):';
-          numberBox.textContent = digitsOnly.join(', ');
+          numberBox.textContent = numberString;
           numberBox.style.display = 'inline-block';
+
+          // Add to history (prepend)
+          const li = document.createElement('li');
+          li.textContent = numberString + ' — ' + new Date().toLocaleTimeString();
+          historyList.prepend(li);
         } else {
           message.textContent = 'No numbers detected.';
           numberBox.style.display = 'none';

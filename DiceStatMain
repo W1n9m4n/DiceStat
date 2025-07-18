@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Dice Detector Simple</title>
+  <style>
+    body {
+      max-width: 480px;
+      margin: 2rem auto;
+      font-family: Arial, sans-serif;
+      text-align: center;
+      padding: 1rem;
+    }
+    video {
+      width: 100%;
+      border-radius: 8px;
+      box-shadow: 0 0 8px #333;
+    }
+    button {
+      margin-top: 1rem;
+      padding: 10px 20px;
+      font-size: 16px;
+      cursor: pointer;
+    }
+    #status {
+      margin-top: 1rem;
+      font-weight: bold;
+      min-height: 1.5em;
+      color: black;
+    }
+  </style>
+</head>
+<body>
+  <h1>Dice Detector</h1>
+  <video id="video" autoplay muted playsinline></video>
+  <canvas id="canvas" style="display:none;"></canvas>
+  <br />
+  <button id="startButton">Start Camera</button>
+  <div id="status">Status: Waiting to start</div>
+
+  <script>
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const startButton = document.getElementById('startButton');
+    const status = document.getElementById('status');
+
+    let streaming = false;
+    let detectInterval;
+
+    function setStatus(msg, isError = false) {
+      status.textContent = msg;
+      status.style.color = isError ? 'red' : 'black';
+    }
+
+    async function startCamera() {
+      setStatus('Initializing camera...');
+      startButton.disabled = true;
+
+      if (location.protocol !== 'https:' && location.hostname !== 'localhost') {
+        setStatus('Error: Camera requires HTTPS or localhost.', true);
+        startButton.disabled = false;
+        return;
+      }
+
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        setStatus('Error: Camera API not supported in this browser.', true);
+        startButton.disabled = false;
+        return;
+      }
+
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment' },
+          audio: false,
+        });
+
+        video.srcObject = stream;
+
+        // Attempt to play video (autoplay policies)
+        let attempts = 0;
+        const tryPlay = () => {
+          video.play().catch(() => {
+            attempts++;
+            if (attempts < 5) {
+              setTimeout(tryPlay, 1000);
+            } else {
+              setStatus(
+                'Error: Cannot start video playback. Try interacting with the page.',
+                true
+              );
+              startButton.disabled = false;
+            }
+          });
+        };
+        tryPlay();
+
+        video.onplaying = () => {
+          streaming = true;
+          setStatus('Camera live. Detecting dice...');
+          startButton.textContent = 'Camera Started';
+          detectInterval = setInterval(detectDice, 1500);
+        };
+
+        video.onerror = () => {
+          setStatus('Error: Video element error.', true);
+          startButton.disabled = false;
+        };
+
+        // Fallback timeout if no video feed starts
+        setTimeout(() => {
+          if (!video.videoWidth) {
+            setStatus(
+              'Error: Camera not started. Please check permissions and try again.',
+              true
+            );
+            startButton.disabled = false;
+          }
+        }, 7000);
+      } catch (err) {
+        startButton.disabled = false;
+
+        if (err.name === 'NotAllowedError') {
+          setStatus('Error: Camera access denied. Please allow permissions.', true);
+        } else if (err.name === 'NotFoundError') {
+          setStatus('Error: No camera device found.', true);
+        } else {
+          setStatus('Error accessing camera: ' + err.message, true);
+        }
+      }
+    }
+
+    function detectDice() {
+      if (!streaming || video.videoWidth === 0 || video.videoHeight === 0) return;
+
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+      const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      let sum = 0;
+      for (let i = 0; i < imgData.data.length; i += 4) {
+        sum += (imgData.data[i] + imgData.data[i + 1] + imgData.data[i + 2]) / 3;
+      }
+      const avg = sum / (imgData.data.length / 4);
+
+      setStatus(avg > 100 ? 'Dice detected (simulated)' : 'No dice detected');
+    }
+
+    startButton.addEventListener('click', startCamera);
+  </script>
+</body>
+</html>

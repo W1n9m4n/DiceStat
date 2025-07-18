@@ -2,226 +2,149 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Dice Detector Webapp</title>
-  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.0.2/dist/tesseract.min.js"></script>
+  <title>Dice Detector with Roboflow Inference HTTP API</title>
   <style>
     body {
       font-family: sans-serif;
+      background: #f0f0f0;
       display: flex;
       flex-direction: column;
       align-items: center;
-      padding: 2rem;
-      background: #f5f5f5;
+      padding: 20px;
     }
-    .video-container {
-      position: relative;
+    video, canvas {
+      border-radius: 10px;
+      max-width: 480px;
+      width: 100%;
+    }
+    #history {
+      margin-top: 20px;
       width: 100%;
       max-width: 480px;
-    }
-    video, #overlay {
-      border-radius: 12px;
-      width: 100%;
-      height: auto;
-    }
-    #overlay {
-      position: absolute;
-      top: 0;
-      left: 0;
-      pointer-events: none;
-    }
-    .message {
-      margin-top: 1rem;
-      font-size: 1.2rem;
-      font-weight: 500;
-    }
-    .error {
-      color: red;
-    }
-    button {
-      margin-top: 1rem;
-      padding: 0.5rem 1rem;
-      font-size: 1rem;
-      border: none;
-      border-radius: 8px;
-      background-color: #007bff;
-      color: white;
-      cursor: pointer;
-    }
-    button:disabled {
-      background-color: #aaa;
-      cursor: not-allowed;
-    }
-    #numberBox {
-      margin-top: 1rem;
-      font-size: 2rem;
-      font-weight: bold;
-      color: red;
-      border: 2px solid red;
-      border-radius: 8px;
-      padding: 0.5rem 1rem;
-      min-width: 60px;
-      text-align: center;
-      display: none;
-    }
-    #numberHistory {
-      margin-top: 1.5rem;
-      width: 100%;
-      max-width: 480px;
-    }
-    #numberHistory h3 {
-      margin-bottom: 0.5rem;
-    }
-    #historyList {
-      list-style: none;
-      padding-left: 0;
-    }
-    #historyList li {
+      max-height: 200px;
+      overflow-y: auto;
       background: white;
-      padding: 0.5rem;
-      margin-bottom: 0.3rem;
-      border-left: 4px solid red;
-      font-size: 1.1rem;
+      border: 1px solid #ccc;
+      padding: 10px;
+    }
+    .roll {
+      padding: 5px;
+      border-bottom: 1px solid #eee;
     }
   </style>
 </head>
 <body>
-  <div class="video-container">
-    <video id="video" autoplay playsinline muted></video>
-    <canvas id="overlay"></canvas>
-  </div>
-  <canvas id="canvas" style="display: none;"></canvas>
-  <button id="startBtn">Start Camera</button>
-  <p id="message" class="message"></p>
-  <div id="numberBox"></div>
-
-  <div id="numberHistory">
-    <h3>Detected Numbers</h3>
-    <ul id="historyList"></ul>
-  </div>
+  <h1>Dice Detector 🎲</h1>
+  <video id="video" autoplay muted playsinline></video>
+  <canvas id="canvas" style="display:none;"></canvas>
+  <canvas id="overlay" style="position: absolute; top: 110px; border-radius: 10px; max-width: 480px; width: 100%;"></canvas>
+  <div id="history"></div>
 
   <script>
-    const video = document.getElementById('video');
-    const canvas = document.getElementById('canvas');
-    const overlay = document.getElementById('overlay');
-    const message = document.getElementById('message');
-    const button = document.getElementById('startBtn');
-    const numberBox = document.getElementById('numberBox');
-    const historyList = document.getElementById('historyList');
+    const API_KEY = "hcMpxDXEVyytWxlYcR00";  // Your Roboflow API key
+    const MODEL_ID = "dice-value-identification/1";
+    const API_URL = "https://serverless.roboflow.com/inference";
 
-    let streamStarted = false;
+    const video = document.getElementById("video");
+    const canvas = document.getElementById("canvas");
+    const overlay = document.getElementById("overlay");
+    const history = document.getElementById("history");
 
-    async function startCamera() {
-      message.textContent = '';
-      button.disabled = true;
+    const ctx = canvas.getContext("2d");
+    const overlayCtx = overlay.getContext("2d");
 
-      if (location.protocol !== 'https:' && location.hostname !== 'localhost') {
-        message.textContent = 'Camera access requires HTTPS or localhost.';
-        message.classList.add('error');
-        button.disabled = false;
-        return;
-      }
-
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        message.textContent = 'Camera not supported in this browser.';
-        message.classList.add('error');
-        button.disabled = false;
-        return;
-      }
-
+    async function initCamera() {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
         video.srcObject = stream;
-        streamStarted = true;
-        message.textContent = 'Camera initialized. Detecting numbers...';
 
-        video.addEventListener('loadedmetadata', () => {
-          overlay.width = video.videoWidth;
-          overlay.height = video.videoHeight;
+        video.onloadedmetadata = () => {
           canvas.width = video.videoWidth;
           canvas.height = video.videoHeight;
-        });
 
-        setInterval(recognizeNumberFromFrame, 3000);
+          overlay.width = video.videoWidth;
+          overlay.height = video.videoHeight;
+
+          detectLoop();
+        };
       } catch (err) {
-        console.error(err);
-        message.textContent = err.name === 'NotAllowedError'
-          ? 'Camera access denied. Please allow permission.'
-          : 'Failed to access camera.';
-        message.classList.add('error');
+        alert("Could not access camera: " + err.message);
       }
-      button.disabled = false;
     }
 
-    async function recognizeNumberFromFrame() {
-      if (!streamStarted) return;
+    async function detectLoop() {
+      setInterval(async () => {
+        // Draw current video frame to hidden canvas
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        // Convert to JPEG base64
+        const dataUrl = canvas.toDataURL("image/jpeg");
+        const base64Image = dataUrl.replace(/^data:image\/jpeg;base64,/, "");
 
-      const context = canvas.getContext('2d');
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+        try {
+          // Prepare payload for Roboflow HTTP Inference API
+          const payload = {
+            api_key: API_KEY,
+            model: MODEL_ID,
+            image_base64: base64Image
+          };
 
-      // Preprocess: grayscale + contrast
-      const imgData = context.getImageData(0, 0, canvas.width, canvas.height);
-      for (let i = 0; i < imgData.data.length; i += 4) {
-        const avg = (imgData.data[i] + imgData.data[i + 1] + imgData.data[i + 2]) / 3;
-        imgData.data[i] = imgData.data[i + 1] = imgData.data[i + 2] = avg;
-      }
-      const factor = 1.5;
-      for (let i = 0; i < imgData.data.length; i += 4) {
-        for (let j = 0; j < 3; j++) {
-          imgData.data[i + j] = Math.min(255, factor * (imgData.data[i + j] - 128) + 128);
-        }
-      }
-      context.putImageData(imgData, 0, 0);
+          const response = await fetch(API_URL, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+          });
 
-      const dataUrl = canvas.toDataURL('image/png');
-      message.textContent = 'Recognizing...';
-      numberBox.style.display = 'none';
-
-      try {
-        const result = await Tesseract.recognize(dataUrl, 'eng', {
-          tessedit_char_whitelist: '0123456789',
-          logger: m => console.log(m)
-        });
-
-        const text = result.data.text.trim();
-        const digitsOnly = text.match(/\d+/g);
-
-        // Draw boxes
-        const overlayCtx = overlay.getContext('2d');
-        overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
-        overlayCtx.lineWidth = 2;
-        overlayCtx.strokeStyle = 'red';
-
-        result.data.words.forEach(word => {
-          if (/\d/.test(word.text)) {
-            const { x0, y0, x1, y1 } = word.bbox;
-            overlayCtx.strokeRect(x0, y0, x1 - x0, y1 - y0);
+          if (!response.ok) {
+            throw new Error("HTTP error " + response.status);
           }
-        });
 
-        if (digitsOnly && digitsOnly.length > 0) {
-          const numberString = digitsOnly.join(', ');
-          message.textContent = 'Detected number(s):';
-          numberBox.textContent = numberString;
-          numberBox.style.display = 'inline-block';
+          const result = await response.json();
+          drawPredictions(result.predictions);
+          logRoll(result.predictions);
 
-          const li = document.createElement('li');
-          li.textContent = numberString + ' — ' + new Date().toLocaleTimeString();
-          historyList.prepend(li);
-        } else {
-          message.textContent = 'No numbers detected.';
-          numberBox.style.display = 'none';
+        } catch (error) {
+          console.error("Error during detection:", error);
         }
-      } catch (error) {
-        console.error('OCR Error:', error);
-        message.textContent = 'Failed to detect number.';
-        numberBox.style.display = 'none';
-      }
+      }, 3000);
     }
 
-    button.addEventListener('click', startCamera);
+    function drawPredictions(predictions) {
+      // Clear overlay
+      overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+
+      overlayCtx.strokeStyle = "red";
+      overlayCtx.lineWidth = 2;
+      overlayCtx.font = "20px Arial";
+      overlayCtx.fillStyle = "red";
+
+      predictions.forEach(pred => {
+        // Roboflow predictions use x,y center coords with width/height
+        const x = pred.x - pred.width / 2;
+        const y = pred.y - pred.height / 2;
+        const w = pred.width;
+        const h = pred.height;
+        const label = pred.class; // Dice face value as string, e.g. "3"
+
+        overlayCtx.strokeRect(x, y, w, h);
+        overlayCtx.fillText(label, x + 5, y + 20);
+      });
+    }
+
+    function logRoll(predictions) {
+      const values = predictions
+        .map(p => parseInt(p.class))
+        .filter(n => !isNaN(n))
+        .sort();
+
+      if (values.length === 0) return;
+
+      const div = document.createElement("div");
+      div.className = "roll";
+      div.textContent = `🎲 Roll: ${values.join(", ")}`;
+      history.prepend(div);
+    }
+
+    initCamera();
   </script>
 </body>
 </html>

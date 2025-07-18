@@ -114,7 +114,21 @@
       canvas.height = video.videoHeight;
       context.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-      // Optional: Add preprocessing here to improve OCR accuracy
+      // Grayscale + contrast enhancement preprocessing
+      const imgData = context.getImageData(0, 0, canvas.width, canvas.height);
+      for (let i = 0; i < imgData.data.length; i += 4) {
+        const avg = (imgData.data[i] + imgData.data[i + 1] + imgData.data[i + 2]) / 3;
+        imgData.data[i] = avg;
+        imgData.data[i + 1] = avg;
+        imgData.data[i + 2] = avg;
+      }
+      const factor = 1.5; // contrast factor, tweak if needed
+      for (let i = 0; i < imgData.data.length; i += 4) {
+        imgData.data[i] = Math.min(255, factor * (imgData.data[i] - 128) + 128);
+        imgData.data[i + 1] = Math.min(255, factor * (imgData.data[i + 1] - 128) + 128);
+        imgData.data[i + 2] = Math.min(255, factor * (imgData.data[i + 2] - 128) + 128);
+      }
+      context.putImageData(imgData, 0, 0);
 
       const dataUrl = canvas.toDataURL('image/png');
       message.textContent = 'Recognizing...';
@@ -122,6 +136,7 @@
 
       try {
         const result = await Tesseract.recognize(dataUrl, 'eng', {
+          tessedit_char_whitelist: '0123456789',
           logger: m => console.log(m)
         });
 

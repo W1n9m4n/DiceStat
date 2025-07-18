@@ -3,22 +3,24 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Dice Pip Detector</title>
+<title>Dice Pip Detector (iPhone Friendly)</title>
 <style>
   body { font-family: Arial, sans-serif; margin: 20px; }
-  video, canvas { border: 1px solid black; }
+  video, canvas { border: 1px solid black; max-width: 100%; height: auto; }
   #history { margin-top: 20px; }
-  table { border-collapse: collapse; }
-  td, th { border: 1px solid #ccc; padding: 5px 10px; }
+  table { border-collapse: collapse; width: 100%; }
+  td, th { border: 1px solid #ccc; padding: 5px 10px; text-align: center; }
+  button { font-size: 1.2rem; padding: 10px 20px; margin-bottom: 10px; }
 </style>
 </head>
 <body>
 <h1>Dice Pip Detector</h1>
-<video id="video" width="640" height="480" autoplay muted></video>
+<button id="startBtn">Start Camera</button><br />
+<video id="video" width="640" height="480" autoplay muted playsinline></video>
 <canvas id="canvas" width="640" height="480" style="display:none;"></canvas>
 
 <h2>Current Dice Count</h2>
-<div id="currentCount">Detecting...</div>
+<div id="currentCount">Press "Start Camera" to begin</div>
 
 <h2>History</h2>
 <table id="history">
@@ -33,36 +35,37 @@
   let ctx = canvas.getContext('2d');
   let currentCountDiv = document.getElementById('currentCount');
   let historyTableBody = document.querySelector('#history tbody');
+  let startBtn = document.getElementById('startBtn');
 
   let streaming = false;
   let src, gray, blurred, thresh, contours, hierarchy;
 
   function onOpenCvReady() {
     console.log('OpenCV.js is ready');
-    startCamera();
+    startBtn.disabled = false;
   }
 
-  function startCamera() {
-    navigator.mediaDevices.getUserMedia({ video: true })
-      .then(function(stream) {
-        video.srcObject = stream;
-        video.play();
-      })
-      .catch(function(err) {
-        alert('Cannot access camera: ' + err);
-      });
+  startBtn.addEventListener('click', () => {
+    startBtn.disabled = true;
+    startCamera();
+  });
 
-    video.addEventListener('canplay', function() {
-      if (!streaming) {
-        streaming = true;
-        initCvObjects();
-        processVideo();
-      }
-    });
+  async function startCamera() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+      video.srcObject = stream;
+      await video.play();
+      streaming = true;
+      initCvObjects();
+      processVideo();
+    } catch (err) {
+      alert('Cannot access camera: ' + err);
+      startBtn.disabled = false;
+    }
   }
 
   function initCvObjects() {
-    src = new cv.Mat(video.height, video.width, cv.CV_8UC4);
+    src = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
     gray = new cv.Mat();
     blurred = new cv.Mat();
     thresh = new cv.Mat();
@@ -72,9 +75,7 @@
 
   function processVideo() {
     if (!streaming) {
-      // clean up
-      src.delete(); gray.delete(); blurred.delete(); thresh.delete();
-      contours.delete(); hierarchy.delete();
+      cleanup();
       return;
     }
 
@@ -82,29 +83,24 @@
     let imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
     src.data.set(imageData.data);
 
-    // Convert to grayscale
+    // Grayscale
     cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
 
-    // Blur to reduce noise
+    // Blur
     cv.GaussianBlur(gray, blurred, new cv.Size(7,7), 1.5, 1.5, cv.BORDER_DEFAULT);
 
-    // Threshold to binary image (bright dots on dice)
+    // Adaptive threshold
     cv.adaptiveThreshold(blurred, thresh, 255, cv.ADAPTIVE_THRESH_MEAN_C, cv.THRESH_BINARY_INV, 15, 5);
 
-    // Find contours (potential pips)
+    // Find contours
     cv.findContours(thresh, contours, hierarchy, cv.RETR_CCOMP, cv.CHAIN_APPROX_SIMPLE);
 
-    // We'll try a very simple approach:
-    // - Group nearby contours as one die
-    // - Count pips inside each die
-    // This is a naive method, but good for a start
-
-    // Get contours centers
+    // Get contour centers
     let centers = [];
     for (let i = 0; i < contours.size(); i++) {
       let cnt = contours.get(i);
       let moments = cv.moments(cnt);
-      if (moments.m00 > 10) { // filter tiny contours
+      if (moments.m00 > 10) {
         let cx = moments.m10 / moments.m00;
         let cy = moments.m01 / moments.m00;
         centers.push({x: cx, y: cy});
@@ -112,9 +108,9 @@
       cnt.delete();
     }
 
-    // Group centers by proximity (dice clusters)
+    // Group centers by proximity
     let diceClusters = [];
-    let clusterDistance = 50; // pixels
+    let clusterDistance = 50;
 
     centers.forEach(center => {
       let foundCluster = false;
@@ -135,16 +131,15 @@
       }
     });
 
-    // Count pips per die cluster
+    // Count pips per cluster
     let pipCounts = {};
     diceClusters.forEach(cluster => {
       let count = cluster.length;
-      if (count > 0 && count <= 6) { // dice have max 6 pips
+      if (count > 0 && count <= 6) {
         pipCounts[count] = (pipCounts[count] || 0) + 1;
       }
     });
 
-    // Display current count
     if (Object.keys(pipCounts).length === 0) {
       currentCountDiv.textContent = "No dice detected";
     } else {
@@ -155,22 +150,27 @@
         currentCountDiv.appendChild(p);
       }
 
-      // Add to history
       let now = new Date().toLocaleTimeString();
       for (let pip in pipCounts) {
         let row = document.createElement('tr');
         row.innerHTML = `<td>${now}</td><td>${pip}</td><td>${pipCounts[pip]}</td>`;
         historyTableBody.prepend(row);
       }
-
-      // Limit history rows to 20
       while (historyTableBody.rows.length > 20) {
         historyTableBody.deleteRow(historyTableBody.rows.length - 1);
       }
     }
 
-    // Schedule next frame
     setTimeout(processVideo, 500);
+  }
+
+  function cleanup() {
+    if (src) src.delete();
+    if (gray) gray.delete();
+    if (blurred) blurred.delete();
+    if (thresh) thresh.delete();
+    if (contours) contours.delete();
+    if (hierarchy) hierarchy.delete();
   }
 </script>
 </body>

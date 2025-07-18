@@ -2,50 +2,70 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Dice Detector with Confidence Threshold</title>
+  <title>Dice Detector 🎲</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <style>
     body {
-      font-family: sans-serif;
-      background: #f0f0f0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      margin: 0;
+      padding: 1rem;
+      background-color: #f0f0f0;
       display: flex;
       flex-direction: column;
       align-items: center;
-      padding: 20px;
     }
+
     video, canvas {
+      max-width: 100%;
       border-radius: 10px;
-      max-width: 480px;
-      width: 100%;
     }
-    #history {
-      margin-top: 20px;
+
+    #overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      pointer-events: none;
+    }
+
+    #video-container {
+      position: relative;
       width: 100%;
       max-width: 480px;
-      max-height: 200px;
-      overflow-y: auto;
+    }
+
+    #history {
+      margin-top: 1rem;
+      width: 100%;
+      max-width: 480px;
       background: white;
       border: 1px solid #ccc;
-      padding: 10px;
+      border-radius: 5px;
+      padding: 0.5rem;
+      max-height: 200px;
+      overflow-y: auto;
     }
+
     .roll {
-      padding: 5px;
+      padding: 4px;
       border-bottom: 1px solid #eee;
     }
   </style>
 </head>
 <body>
-  <h1>Dice Detector 🎲</h1>
-  <video id="video" autoplay muted playsinline></video>
-  <canvas id="canvas" style="display:none;"></canvas>
-  <canvas id="overlay" style="position: absolute; top: 110px; border-radius: 10px; max-width: 480px; width: 100%;"></canvas>
+  <h2>Dice Detector</h2>
+  <div id="video-container">
+    <video id="video" autoplay muted playsinline></video>
+    <canvas id="overlay"></canvas>
+  </div>
+  <canvas id="canvas" style="display: none;"></canvas>
   <div id="history"></div>
 
   <script>
-    const API_KEY = "hcMpxDXEVyytWxlYcR00";  // Your Roboflow API key
+    const API_KEY = "hcMpxDXEVyytWxlYcR00";
     const MODEL_ID = "dice-value-identification/1";
     const API_URL = "https://serverless.roboflow.com/inference";
 
-    const CONFIDENCE_THRESHOLD = 0.7;  // Filter predictions below this confidence
+    const CONFIDENCE_THRESHOLD = 0.7;
 
     const video = document.getElementById("video");
     const canvas = document.getElementById("canvas");
@@ -57,52 +77,56 @@
 
     async function initCamera() {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: { ideal: "environment" },
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
+          },
+          audio: false
+        });
+
         video.srcObject = stream;
 
         video.onloadedmetadata = () => {
+          video.play();
+
           canvas.width = video.videoWidth;
           canvas.height = video.videoHeight;
-
           overlay.width = video.videoWidth;
           overlay.height = video.videoHeight;
 
           detectLoop();
         };
       } catch (err) {
-        alert("Could not access camera: " + err.message);
+        alert("Camera access failed: " + err.message);
       }
     }
 
     async function detectLoop() {
       setInterval(async () => {
+        if (video.readyState !== 4) return;
+
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
         const dataUrl = canvas.toDataURL("image/jpeg");
-        const base64Image = dataUrl.replace(/^data:image\/jpeg;base64,/, "");
+        const base64 = dataUrl.replace(/^data:image\/jpeg;base64,/, "");
 
         try {
-          const payload = {
-            api_key: API_KEY,
-            model: MODEL_ID,
-            image_base64: base64Image
-          };
-
-          const response = await fetch(API_URL, {
+          const res = await fetch(API_URL, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload)
+            body: JSON.stringify({
+              api_key: API_KEY,
+              model: MODEL_ID,
+              image_base64: base64
+            })
           });
 
-          if (!response.ok) {
-            throw new Error("HTTP error " + response.status);
-          }
-
-          const result = await response.json();
+          const result = await res.json();
           drawPredictions(result.predictions);
           logRoll(result.predictions);
-
-        } catch (error) {
-          console.error("Error during detection:", error);
+        } catch (err) {
+          console.error("Detection error:", err);
         }
       }, 3000);
     }
@@ -111,20 +135,16 @@
       overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
       overlayCtx.strokeStyle = "red";
       overlayCtx.lineWidth = 2;
-      overlayCtx.font = "20px Arial";
+      overlayCtx.font = "16px Arial";
       overlayCtx.fillStyle = "red";
 
       predictions.forEach(pred => {
         if (pred.confidence < CONFIDENCE_THRESHOLD) return;
-
         const x = pred.x - pred.width / 2;
         const y = pred.y - pred.height / 2;
-        const w = pred.width;
-        const h = pred.height;
-        const label = pred.class;
 
-        overlayCtx.strokeRect(x, y, w, h);
-        overlayCtx.fillText(label, x + 5, y + 20);
+        overlayCtx.strokeRect(x, y, pred.width, pred.height);
+        overlayCtx.fillText(pred.class, x + 4, y + 18);
       });
     }
 

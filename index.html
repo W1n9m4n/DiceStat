@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Dice Detector with Roboflow Inference HTTP API</title>
+  <title>Dice Detector with Confidence Threshold</title>
   <style>
     body {
       font-family: sans-serif;
@@ -45,6 +45,8 @@
     const MODEL_ID = "dice-value-identification/1";
     const API_URL = "https://serverless.roboflow.com/inference";
 
+    const CONFIDENCE_THRESHOLD = 0.7;  // Filter predictions below this confidence
+
     const video = document.getElementById("video");
     const canvas = document.getElementById("canvas");
     const overlay = document.getElementById("overlay");
@@ -74,14 +76,11 @@
 
     async function detectLoop() {
       setInterval(async () => {
-        // Draw current video frame to hidden canvas
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        // Convert to JPEG base64
         const dataUrl = canvas.toDataURL("image/jpeg");
         const base64Image = dataUrl.replace(/^data:image\/jpeg;base64,/, "");
 
         try {
-          // Prepare payload for Roboflow HTTP Inference API
           const payload = {
             api_key: API_KEY,
             model: MODEL_ID,
@@ -109,21 +108,20 @@
     }
 
     function drawPredictions(predictions) {
-      // Clear overlay
       overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
-
       overlayCtx.strokeStyle = "red";
       overlayCtx.lineWidth = 2;
       overlayCtx.font = "20px Arial";
       overlayCtx.fillStyle = "red";
 
       predictions.forEach(pred => {
-        // Roboflow predictions use x,y center coords with width/height
+        if (pred.confidence < CONFIDENCE_THRESHOLD) return;
+
         const x = pred.x - pred.width / 2;
         const y = pred.y - pred.height / 2;
         const w = pred.width;
         const h = pred.height;
-        const label = pred.class; // Dice face value as string, e.g. "3"
+        const label = pred.class;
 
         overlayCtx.strokeRect(x, y, w, h);
         overlayCtx.fillText(label, x + 5, y + 20);
@@ -132,6 +130,7 @@
 
     function logRoll(predictions) {
       const values = predictions
+        .filter(p => p.confidence >= CONFIDENCE_THRESHOLD)
         .map(p => parseInt(p.class))
         .filter(n => !isNaN(n))
         .sort();

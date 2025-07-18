@@ -1,77 +1,202 @@
-<style>
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    margin: 0;
-    padding: 1rem;
-    background-color: #f0f0f0;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    max-width: 100vw;
-    box-sizing: border-box;
-  }
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dice Detector</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      margin: 0;
+      padding: 1rem;
+      background-color: #f0f0f0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      max-width: 100vw;
+      box-sizing: border-box;
+    }
 
-  h2 {
-    margin-bottom: 0.5rem;
-    text-align: center;
-  }
+    h2 {
+      margin-bottom: 0.5rem;
+      text-align: center;
+    }
 
-  #video-container {
-    position: relative;
-    width: 100%;
-    max-width: 480px;
-    max-height: 66vh; /* shrink visible camera space */
-    aspect-ratio: 4 / 3;
-    border-radius: 10px;
-    overflow: hidden;
-    margin-bottom: 1rem;
-  }
+    #video-container {
+      position: relative;
+      width: 100%;
+      max-width: 320px;
+      max-height: 40vh;
+      border-radius: 10px;
+      overflow: hidden;
+      margin-bottom: 1rem;
+      aspect-ratio: 4 / 3;
+    }
 
-  video, canvas {
-    width: 100%;
-    height: auto;
-    display: block;
-  }
+    video, canvas {
+      width: 100%;
+      height: auto;
+      display: block;
+    }
 
-  #overlay {
-    position: absolute;
-    top: 0;
-    left: 0;
-    pointer-events: none;
-  }
+    #overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      pointer-events: none;
+    }
 
-  #startBtn {
-    margin-bottom: 0.8rem;
-    padding: 0.6rem 1.2rem;
-    font-size: 1rem;
-    background-color: #007bff;
-    color: white;
-    border: none;
-    border-radius: 8px;
-    cursor: pointer;
-  }
+    #startBtn {
+      margin-bottom: 0.8rem;
+      padding: 0.6rem 1.2rem;
+      font-size: 1rem;
+      background-color: #007bff;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+    }
 
-  #status {
-    color: #333;
-    margin-bottom: 1rem;
-    font-size: 1rem;
-    text-align: center;
-  }
+    #status {
+      color: #333;
+      margin-bottom: 1rem;
+      font-size: 1rem;
+      text-align: center;
+    }
 
-  #history {
-    width: 100%;
-    max-width: 480px;
-    background: white;
-    border: 1px solid #ccc;
-    border-radius: 5px;
-    padding: 0.5rem;
-    max-height: 30vh;
-    overflow-y: auto;
-    font-size: 1rem;
-  }
+    #history {
+      width: 100%;
+      max-width: 480px;
+      background: white;
+      border: 1px solid #ccc;
+      border-radius: 5px;
+      padding: 0.5rem;
+      max-height: 30vh;
+      overflow-y: auto;
+      font-size: 1rem;
+    }
 
-  .roll {
-    padding: 4px 0;
-    border-bottom: 1px solid #eee;
-  }
-</style>
+    .roll {
+      padding: 4px 0;
+      border-bottom: 1px solid #eee;
+    }
+  </style>
+</head>
+<body>
+  <h2>Dice Detector</h2>
+  <div id="video-container">
+    <video id="video" autoplay muted playsinline></video>
+    <canvas id="overlay"></canvas>
+  </div>
+  <button id="startBtn">Start Camera</button>
+  <div id="status"></div>
+  <div id="history"></div>
+  <canvas id="canvas" style="display: none;"></canvas>
+
+  <script>
+    const video = document.getElementById("video");
+    const canvas = document.getElementById("canvas");
+    const overlay = document.getElementById("overlay");
+    const ctx = canvas.getContext("2d");
+    const overlayCtx = overlay.getContext("2d");
+    const startBtn = document.getElementById("startBtn");
+    const status = document.getElementById("status");
+    const history = document.getElementById("history");
+
+    const API_URL = "https://detect.roboflow.com/dice-value-identification/1";
+    const API_KEY = "hcMpxDXEVyytWxlYcR00";
+    const CONFIDENCE_THRESHOLD = 0.7;
+
+    startBtn.addEventListener("click", async () => {
+      startBtn.disabled = true;
+      status.textContent = "Requesting camera access...";
+
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+        video.srcObject = stream;
+
+        video.onloadedmetadata = () => {
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+          overlay.width = video.videoWidth;
+          overlay.height = video.videoHeight;
+
+          setInterval(runDetection, 2000);
+          status.textContent = "Camera started.";
+        };
+      } catch (err) {
+        console.error("Camera error:", err);
+        status.textContent = "Camera access denied or unavailable.";
+      }
+    });
+
+    async function runDetection() {
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const dataUrl = canvas.toDataURL("image/jpeg");
+      const base64 = dataUrl.replace(/^data:image\/jpeg;base64,/, "");
+
+      try {
+        const res = await fetch(API_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            api_key: API_KEY,
+            image_base64: base64
+          })
+        });
+
+        const result = await res.json();
+        console.log("Roboflow result:", result);
+
+        if (!result || !result.predictions || !Array.isArray(result.predictions)) {
+          status.textContent = "No predictions found.";
+          return;
+        }
+
+        drawPredictions(result.predictions);
+        logRoll(result.predictions);
+
+      } catch (err) {
+        console.error("Detection error:", err);
+        status.textContent = "Detection error: " + err.message;
+      }
+    }
+
+    function drawPredictions(predictions) {
+      overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+      overlayCtx.strokeStyle = "red";
+      overlayCtx.lineWidth = 2;
+      overlayCtx.font = "20px Arial";
+      overlayCtx.fillStyle = "red";
+
+      predictions.forEach(pred => {
+        if (pred.confidence < CONFIDENCE_THRESHOLD) return;
+
+        const x = pred.x - pred.width / 2;
+        const y = pred.y - pred.height / 2;
+        const w = pred.width;
+        const h = pred.height;
+        const label = pred.class;
+
+        overlayCtx.strokeRect(x, y, w, h);
+        overlayCtx.fillText(label, x + 5, y + 20);
+      });
+    }
+
+    function logRoll(predictions) {
+      const values = predictions
+        .filter(p => p.confidence >= CONFIDENCE_THRESHOLD)
+        .map(p => parseInt(p.class))
+        .filter(n => !isNaN(n))
+        .sort();
+
+      if (values.length === 0) return;
+
+      const div = document.createElement("div");
+      div.className = "roll";
+      div.textContent = `🎲 Roll: ${values.join(", ")}`;
+      history.prepend(div);
+    }
+  </script>
+</body>
+</html>

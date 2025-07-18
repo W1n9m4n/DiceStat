@@ -28,9 +28,71 @@
     <tbody></tbody>
   </table>
 
-  <script async src="https://docs.opencv.org/4.x/opencv.js" onload="onOpenCvReady();"></script>
   <script>
-    // JS logic as provided above
+    const video = document.getElementById("video");
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+    const currentCountDiv = document.getElementById("currentCount");
+    const historyTableBody = document.querySelector("#history tbody");
+    const startBtn = document.getElementById("startBtn");
+
+    async function startCamera() {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+      video.srcObject = stream;
+      await video.play();
+      detectLoop();
+    }
+
+    async function detectLoop() {
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob(async (blob) => {
+        const formData = new FormData();
+        formData.append("image", blob, "frame.jpg");
+
+        const response = await fetch("https://detect.roboflow.com/dice-9uzag/3?api_key=hcMpxDXEVyytWxlYcR00", {
+          method: "POST",
+          body: formData
+        });
+
+        const data = await response.json();
+        const counts = {};
+
+        if (data.predictions) {
+          data.predictions.forEach(pred => {
+            const label = pred.class;
+            counts[label] = (counts[label] || 0) + 1;
+          });
+        }
+
+        currentCountDiv.innerHTML = '';
+        const timestamp = new Date().toLocaleTimeString();
+
+        if (Object.keys(counts).length === 0) {
+          currentCountDiv.textContent = "No dice detected";
+        } else {
+          for (const [pip, count] of Object.entries(counts)) {
+            const p = document.createElement("p");
+            p.textContent = `${count} dice with ${pip} pip${pip !== "1" ? 's' : ''}`;
+            currentCountDiv.appendChild(p);
+
+            const row = document.createElement("tr");
+            row.innerHTML = `<td>${timestamp}</td><td>${pip}</td><td>${count}</td>`;
+            historyTableBody.prepend(row);
+          }
+
+          while (historyTableBody.rows.length > 20) {
+            historyTableBody.deleteRow(historyTableBody.rows.length - 1);
+          }
+        }
+      }, "image/jpeg");
+
+      setTimeout(detectLoop, 1500);
+    }
+
+    startBtn.addEventListener("click", () => {
+      startBtn.disabled = true;
+      startCamera();
+    });
   </script>
 </body>
 </html>

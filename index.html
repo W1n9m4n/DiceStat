@@ -14,11 +14,21 @@
       padding: 2rem;
       background: #f5f5f5;
     }
-    video {
-      border-radius: 12px;
-      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+    .video-container {
+      position: relative;
       width: 100%;
       max-width: 480px;
+    }
+    video, #overlay {
+      border-radius: 12px;
+      width: 100%;
+      height: auto;
+    }
+    #overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      pointer-events: none;
     }
     .message {
       margin-top: 1rem;
@@ -76,13 +86,15 @@
   </style>
 </head>
 <body>
-  <video id="video" autoplay playsinline muted></video>
+  <div class="video-container">
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="overlay"></canvas>
+  </div>
   <canvas id="canvas" style="display: none;"></canvas>
   <button id="startBtn">Start Camera</button>
   <p id="message" class="message"></p>
   <div id="numberBox"></div>
 
-  <!-- NEW: Number history list -->
   <div id="numberHistory">
     <h3>Detected Numbers</h3>
     <ul id="historyList"></ul>
@@ -91,6 +103,7 @@
   <script>
     const video = document.getElementById('video');
     const canvas = document.getElementById('canvas');
+    const overlay = document.getElementById('overlay');
     const message = document.getElementById('message');
     const button = document.getElementById('startBtn');
     const numberBox = document.getElementById('numberBox');
@@ -121,6 +134,14 @@
         video.srcObject = stream;
         streamStarted = true;
         message.textContent = 'Camera initialized. Detecting numbers...';
+
+        video.addEventListener('loadedmetadata', () => {
+          overlay.width = video.videoWidth;
+          overlay.height = video.videoHeight;
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+        });
+
         setInterval(recognizeNumberFromFrame, 3000);
       } catch (err) {
         console.error(err);
@@ -140,7 +161,7 @@
       canvas.height = video.videoHeight;
       context.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-      // Grayscale + contrast
+      // Preprocess: grayscale + contrast
       const imgData = context.getImageData(0, 0, canvas.width, canvas.height);
       for (let i = 0; i < imgData.data.length; i += 4) {
         const avg = (imgData.data[i] + imgData.data[i + 1] + imgData.data[i + 2]) / 3;
@@ -166,13 +187,26 @@
 
         const text = result.data.text.trim();
         const digitsOnly = text.match(/\d+/g);
+
+        // Draw boxes
+        const overlayCtx = overlay.getContext('2d');
+        overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+        overlayCtx.lineWidth = 2;
+        overlayCtx.strokeStyle = 'red';
+
+        result.data.words.forEach(word => {
+          if (/\d/.test(word.text)) {
+            const { x0, y0, x1, y1 } = word.bbox;
+            overlayCtx.strokeRect(x0, y0, x1 - x0, y1 - y0);
+          }
+        });
+
         if (digitsOnly && digitsOnly.length > 0) {
           const numberString = digitsOnly.join(', ');
           message.textContent = 'Detected number(s):';
           numberBox.textContent = numberString;
           numberBox.style.display = 'inline-block';
 
-          // Add to history (prepend)
           const li = document.createElement('li');
           li.textContent = numberString + ' — ' + new Date().toLocaleTimeString();
           historyList.prepend(li);

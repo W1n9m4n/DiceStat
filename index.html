@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Dice Detector Webapp</title>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.0.2/dist/tesseract.min.js"></script>
   <style>
     body {
       font-family: sans-serif;
@@ -41,6 +42,18 @@
       background-color: #aaa;
       cursor: not-allowed;
     }
+    #numberBox {
+      margin-top: 1rem;
+      font-size: 2rem;
+      font-weight: bold;
+      color: red;
+      border: 2px solid red;
+      border-radius: 8px;
+      padding: 0.5rem 1rem;
+      min-width: 60px;
+      text-align: center;
+      display: none;
+    }
   </style>
 </head>
 <body>
@@ -48,12 +61,14 @@
   <canvas id="canvas" style="display: none;"></canvas>
   <button id="startBtn">Start Camera</button>
   <p id="message" class="message"></p>
+  <div id="numberBox"></div>
 
   <script>
     const video = document.getElementById('video');
     const canvas = document.getElementById('canvas');
     const message = document.getElementById('message');
     const button = document.getElementById('startBtn');
+    const numberBox = document.getElementById('numberBox');
 
     let streamStarted = false;
 
@@ -79,8 +94,8 @@
         const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
         video.srcObject = stream;
         streamStarted = true;
-        message.textContent = 'Camera initialized successfully.';
-        setInterval(detectDice, 1500);
+        message.textContent = 'Camera initialized. Detecting numbers...';
+        setInterval(recognizeNumberFromFrame, 3000);
       } catch (err) {
         console.error(err);
         message.textContent = err.name === 'NotAllowedError'
@@ -91,23 +106,40 @@
       button.disabled = false;
     }
 
-    function detectDice() {
+    async function recognizeNumberFromFrame() {
       if (!streamStarted) return;
+
       const context = canvas.getContext('2d');
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
       context.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-      const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
-      let sum = 0;
-      for (let i = 0; i < imageData.data.length; i += 4) {
-        const r = imageData.data[i];
-        const g = imageData.data[i + 1];
-        const b = imageData.data[i + 2];
-        sum += (r + g + b) / 3;
+      // Optional: Add preprocessing here to improve OCR accuracy
+
+      const dataUrl = canvas.toDataURL('image/png');
+      message.textContent = 'Recognizing...';
+      numberBox.style.display = 'none';
+
+      try {
+        const result = await Tesseract.recognize(dataUrl, 'eng', {
+          logger: m => console.log(m)
+        });
+
+        const text = result.data.text.trim();
+        const digitsOnly = text.match(/\d+/g);
+        if (digitsOnly && digitsOnly.length > 0) {
+          message.textContent = 'Detected number(s):';
+          numberBox.textContent = digitsOnly.join(', ');
+          numberBox.style.display = 'inline-block';
+        } else {
+          message.textContent = 'No numbers detected.';
+          numberBox.style.display = 'none';
+        }
+      } catch (error) {
+        console.error('OCR Error:', error);
+        message.textContent = 'Failed to detect number.';
+        numberBox.style.display = 'none';
       }
-      const avg = sum / (imageData.data.length / 4);
-      message.textContent = avg > 100 ? 'Dice detected (simulated)' : 'No dice detected (simulated)';
     }
 
     button.addEventListener('click', startCamera);

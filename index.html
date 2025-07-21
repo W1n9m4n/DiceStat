@@ -1,8 +1,8 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
   <title>DiceStat</title>
   <style>
     body { font-family: sans-serif; max-width: 480px; margin: 2em auto; padding: 0 1em; }
@@ -16,57 +16,47 @@
   <h1>DiceStat</h1>
   <p>Capture a photo of your dice and get instant stats!</p>
 
-  <!-- File input that invokes the camera on mobile -->
   <input type="file" accept="image/*" capture="environment" id="fileInput" />
-
-  <!-- Or you could wire up getUserMedia for a live preview if you prefer -->
-
   <button id="analyzeBtn" disabled>Analyze Dice</button>
-
   <div id="results"></div>
 
-  <!-- Axios from CDN -->
   <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
   <script>
     const fileInput = document.getElementById('fileInput');
     const analyzeBtn = document.getElementById('analyzeBtn');
     const resultsDiv = document.getElementById('results');
+    let dataUri = '';
 
-    let base64Image = '';
-
-    // Read selected file as Base64
-    fileInput.addEventListener('change', async (e) => {
+    fileInput.addEventListener('change', (e) => {
       const file = e.target.files[0];
       if (!file) return;
       const reader = new FileReader();
       reader.onload = () => {
-        base64Image = reader.result.split(',')[1];  // strip off data:image/...;base64,
+        dataUri = reader.result;     // keep the full data:image/...;base64,... string
         analyzeBtn.disabled = false;
       };
       reader.readAsDataURL(file);
     });
 
     analyzeBtn.addEventListener('click', async () => {
-      if (!base64Image) return;
+      if (!dataUri) return;
       resultsDiv.innerHTML = '<p>Analyzing…</p>';
 
       try {
         const response = await axios.post(
           'https://serverless.roboflow.com/dice-9uzag/3',
-          base64Image,
+          { image: dataUri },                  // <-- JSON payload
           {
             params: { api_key: 'hcMpxDXEVyytWxlYcR00' },
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+            headers: { 'Content-Type': 'application/json' }  // <-- JSON header
           }
         );
 
         const preds = response.data.predictions || [];
-        // Extract the integer label for each detected die
-        const diceValues = preds.map(p => Number(p.class)); 
+        const diceValues = preds.map(p => Number(p.class));
         const count = diceValues.length;
-        const total = diceValues.reduce((sum,v) => sum+v, 0);
+        const total = diceValues.reduce((sum,v) => sum + v, 0);
 
-        // Display
         resultsDiv.innerHTML = `
           <h2>Results</h2>
           <ul>
@@ -81,7 +71,7 @@
         `;
       } catch (err) {
         console.error(err);
-        resultsDiv.innerHTML = `<p style="color:red;">Error: ${err.message}</p>`;
+        resultsDiv.innerHTML = `<p style="color:red;">Error: ${err.response?.data?.message || err.message}</p>`;
       }
     });
   </script>

@@ -3,41 +3,70 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>DiceStat Video Detection with Confidence Slider</title>
+  <title>DiceStat - Image & Video Detection</title>
   <style>
     body {
       font-family: Arial, sans-serif;
       margin: 20px;
+      max-width: 900px;
     }
-    input[type=range] {
+    h1 {
+      margin-bottom: 10px;
+    }
+    label {
+      font-weight: bold;
+    }
+    #confidenceContainer {
+      margin: 10px 0 20px;
+    }
+    input[type="range"] {
       width: 300px;
-      margin-top: 5px;
+      vertical-align: middle;
+      margin-left: 10px;
     }
-    video {
-      max-width: 100%;
-      display: block;
+    #output {
+      position: relative;
       margin-top: 20px;
+      display: inline-block;
+      max-width: 100%;
     }
-    canvas {
+    #canvas {
       position: absolute;
       top: 0;
       left: 0;
       pointer-events: none;
     }
+    img, video {
+      max-width: 100%;
+      display: block;
+    }
+    #videoContainer {
+      position: relative;
+      display: inline-block;
+    }
   </style>
 </head>
 <body>
-  <h1>DiceStat Video Detection</h1>
+  <h1>DiceStat Detection</h1>
 
-  <label for="confidenceSlider">Confidence Threshold: <span id="confidenceValue">0.75</span></label><br />
-  <input type="range" id="confidenceSlider" min="0" max="1" step="0.01" value="0.75" />
+  <div id="confidenceContainer">
+    <label for="confidenceSlider">Confidence Threshold: <span id="confidenceValue">0.75</span></label>
+    <input type="range" id="confidenceSlider" min="0" max="1" step="0.01" value="0.75" />
+  </div>
 
-  <video id="video" controls crossorigin="anonymous">
-    <source src="your_video.mp4" type="video/mp4" />
-    Your browser does not support the video tag.
-  </video>
+  <div>
+    <label for="imageUpload">Upload Image:</label>
+    <input type="file" id="imageUpload" accept="image/*" />
+  </div>
 
-  <canvas id="canvas"></canvas>
+  <div style="margin-top: 20px;">
+    <label for="videoUpload">Upload Video:</label>
+    <input type="file" id="videoUpload" accept="video/*" />
+  </div>
+
+  <div id="output" style="margin-top: 20px;">
+    <!-- Image or video + canvas overlays go here -->
+  </div>
 
   <script type="module">
     import Roboflow from "https://cdn.jsdelivr.net/npm/@roboflow/inference@1.2.3/dist/roboflow.mjs";
@@ -45,38 +74,25 @@
     const rf = new Roboflow({ apiKey: "YOUR_API_KEY_HERE" });
     const model = await rf.load("dice-statistics/3");
 
-    const video = document.getElementById("video");
-    const canvas = document.getElementById("canvas");
-    const ctx = canvas.getContext("2d");
-    const slider = document.getElementById("confidenceSlider");
+    const confidenceSlider = document.getElementById("confidenceSlider");
     const confidenceValueDisplay = document.getElementById("confidenceValue");
 
-    let confidenceThreshold = parseFloat(slider.value);
-
-    slider.addEventListener("input", () => {
-      confidenceThreshold = parseFloat(slider.value);
+    let confidenceThreshold = parseFloat(confidenceSlider.value);
+    confidenceSlider.addEventListener("input", () => {
+      confidenceThreshold = parseFloat(confidenceSlider.value);
       confidenceValueDisplay.textContent = confidenceThreshold.toFixed(2);
     });
 
-    video.addEventListener("loadedmetadata", () => {
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      canvas.style.width = video.clientWidth + "px";
-      canvas.style.height = video.clientHeight + "px";
-      canvas.style.position = "absolute";
-      canvas.style.top = video.offsetTop + "px";
-      canvas.style.left = video.offsetLeft + "px";
-    });
+    const output = document.getElementById("output");
 
-    async function detectFrame() {
-      if (video.paused || video.ended) {
-        requestAnimationFrame(detectFrame);
-        return;
-      }
+    // Clear output container
+    function clearOutput() {
+      output.innerHTML = "";
+    }
 
-      const predictions = await model.predict(video, { confidence: confidenceThreshold });
-
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    // Draw predictions on canvas overlay
+    function drawPredictions(predictions, ctx) {
+      ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
 
       predictions.forEach(prediction => {
         if (prediction.confidence >= confidenceThreshold) {
@@ -91,12 +107,103 @@
           ctx.fillText(`${cls} ${(confidence * 100).toFixed(1)}%`, x, y > 20 ? y - 5 : y + 20);
         }
       });
-
-      requestAnimationFrame(detectFrame);
     }
 
-    video.addEventListener("play", () => {
-      detectFrame();
+    // Handle image upload and inference
+    document.getElementById("imageUpload").addEventListener("change", async (e) => {
+      clearOutput();
+
+      const file = e.target.files[0];
+      if (!file) return;
+
+      const img = document.createElement("img");
+      img.src = URL.createObjectURL(file);
+
+      img.onload = async () => {
+        // Clear previous output and add new image + canvas
+        clearOutput();
+        output.appendChild(img);
+
+        const canvas = document.createElement("canvas");
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        canvas.style.position = "absolute";
+        canvas.style.top = img.offsetTop + "px";
+        canvas.style.left = img.offsetLeft + "px";
+        canvas.style.maxWidth = "100%";
+        output.appendChild(canvas);
+
+        const ctx = canvas.getContext("2d");
+
+        const predictions = await model.predict(img, { confidence: confidenceThreshold });
+
+        drawPredictions(predictions, ctx);
+      };
+    });
+
+    // Handle video upload and frame-by-frame inference
+    document.getElementById("videoUpload").addEventListener("change", async (e) => {
+      clearOutput();
+
+      const file = e.target.files[0];
+      if (!file) return;
+
+      const video = document.createElement("video");
+      video.controls = true;
+      video.src = URL.createObjectURL(file);
+      video.crossOrigin = "anonymous";
+
+      video.style.maxWidth = "100%";
+
+      output.appendChild(video);
+
+      const canvas = document.createElement("canvas");
+      canvas.style.position = "absolute";
+      output.appendChild(canvas);
+
+      const ctx = canvas.getContext("2d");
+
+      video.addEventListener("loadedmetadata", () => {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+
+        canvas.style.width = video.clientWidth + "px";
+        canvas.style.height = video.clientHeight + "px";
+
+        canvas.style.top = video.offsetTop + "px";
+        canvas.style.left = video.offsetLeft + "px";
+      });
+
+      async function detectFrame() {
+        if (video.paused || video.ended) {
+          requestAnimationFrame(detectFrame);
+          return;
+        }
+
+        const predictions = await model.predict(video, { confidence: confidenceThreshold });
+
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        predictions.forEach(prediction => {
+          if (prediction.confidence >= confidenceThreshold) {
+            const { x, y, width, height, class: cls, confidence } = prediction;
+
+            ctx.strokeStyle = "red";
+            ctx.lineWidth = 2;
+            ctx.font = "18px Arial";
+            ctx.fillStyle = "red";
+
+            ctx.strokeRect(x, y, width, height);
+            ctx.fillText(`${cls} ${(confidence * 100).toFixed(1)}%`, x, y > 20 ? y - 5 : y + 20);
+          }
+        });
+
+        requestAnimationFrame(detectFrame);
+      }
+
+      video.addEventListener("play", () => {
+        detectFrame();
+      });
     });
   </script>
 </body>

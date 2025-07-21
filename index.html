@@ -1,103 +1,159 @@
-<script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
-<script>
-  const key = 'hcMpxDXEVyytWxlYcR00';
-  const fileInput   = document.getElementById('fileInput');
-  const startCamBtn = document.getElementById('startCamBtn');
-  const video       = document.getElementById('video');
-  const captureBtn  = document.getElementById('captureBtn');
-  const resultsDiv  = document.getElementById('results');
-  let stream = null;
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>DiceStat</title>
+  <style>
+    body { font-family: sans-serif; max-width: 480px; margin: 2em auto; padding: 0 1em; }
+    h1 { text-align: center; }
+    input, button { font-size: 1em; margin: 0.5em 0; width: 100%; }
+    video, canvas { max-width: 100%; margin-top: 0.5em; }
+    #results ul { padding-left: 1.2em; }
+  </style>
+</head>
+<body>
+  <h1>DiceStat</h1>
+  <p>Choose one of three ways to analyze your dice:</p>
 
-  function toJpegDataURI(el) {
-    const W = el.videoWidth || el.naturalWidth;
-    const H = el.videoHeight || el.naturalHeight;
-    const c = document.createElement('canvas');
-    c.width = W; c.height = H;
-    c.getContext('2d').drawImage(el, 0, 0);
-    return c.toDataURL('image/jpeg');
-  }
-  function strip(dataUri) { return dataUri.split(',')[1]; }
+  <!-- 1) IMAGE URL -->
+  <label>
+    🔗 Image URL:
+    <input type="url" id="urlInput" placeholder="https://example.com/mydice.jpg"/>
+  </label>
+  <button id="urlAnalyzeBtn">Analyze via URL</button>
 
-  async function analyze(rawB64) {
-    resultsDiv.innerHTML = '<p>Analyzing…</p>';
-    try {
-      const payload = {
-        api_key: key,
-        image: { type: 'base64', value: rawB64 }
-      };
-      const resp = await axios.post(
-        'https://serverless.roboflow.com/dice-9uzag/3',
-        payload,
-        { headers: { 'Content-Type': 'application/json' } }
-      );
+  <hr/>
 
-      // ensure we have an object
-      let data = resp.data;
-      if (typeof data === 'string') {
-        try { data = JSON.parse(data); }
-        catch(_){ /* leave as string */ }
+  <!-- 2) UPLOAD -->
+  <label>
+    📁 Upload image:
+    <input type="file" accept="image/*" id="fileInput"/>
+  </label>
+
+  <hr/>
+
+  <!-- 3) LIVE CAMERA -->
+  <button id="startCamBtn">📷 Start Camera</button>
+  <video id="video" autoplay playsinline hidden></video>
+  <button id="captureBtn" hidden>🖼️ Capture & Analyze</button>
+
+  <div id="results"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+  <script>
+    const API_URL = 'https://serverless.roboflow.com/dice-9uzag/3';
+    const API_KEY = 'hcMpxDXEVyytWxlYcR00';  // replace with your inference key
+
+    const urlInput       = document.getElementById('urlInput');
+    const urlAnalyzeBtn  = document.getElementById('urlAnalyzeBtn');
+    const fileInput      = document.getElementById('fileInput');
+    const startCamBtn    = document.getElementById('startCamBtn');
+    const video          = document.getElementById('video');
+    const captureBtn     = document.getElementById('captureBtn');
+    const resultsDiv     = document.getElementById('results');
+    let stream = null;
+
+    // --- 1) URL Mode ---
+    urlAnalyzeBtn.addEventListener('click', async () => {
+      const imageUrl = urlInput.value.trim();
+      if (!imageUrl) return alert('Please enter an image URL');
+      resultsDiv.innerHTML = '<p>Analyzing via URL…</p>';
+      try {
+        const resp = await axios.post(
+          API_URL,
+          null,
+          {
+            params: { api_key: API_KEY, image: imageUrl }
+          }
+        );
+        showResults(resp.data);
+      } catch (err) {
+        showError(err);
       }
+    });
 
-      console.log('Raw API response:', data);
+    // --- 2) UPLOAD Mode ---
+    fileInput.addEventListener('change', e => {
+      stopCamera();
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        const img = new Image();
+        img.onload = () => analyzeCanvas(img);
+        img.src = reader.result;
+      };
+      reader.readAsDataURL(file);
+    });
 
+    // --- 3) CAMERA Mode ---
+    startCamBtn.addEventListener('click', async () => {
+      if (stream) { stopCamera(); return; }
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+        video.srcObject = stream;
+        video.hidden = false;
+        captureBtn.hidden = false;
+        startCamBtn.textContent = '🛑 Stop Camera';
+      } catch (err) {
+        alert('Camera error: ' + err.message);
+      }
+    });
+    captureBtn.addEventListener('click', () => analyzeCanvas(video));
+
+    function stopCamera() {
+      if (stream) stream.getTracks().forEach(t => t.stop());
+      stream = null;
+      video.hidden = true;
+      captureBtn.hidden = true;
+      startCamBtn.textContent = '📷 Start Camera';
+    }
+
+    // --- Shared Helpers ---
+    function analyzeCanvas(el) {
+      resultsDiv.innerHTML = '<p>Analyzing…</p>';
+      // draw to canvas → JPEG Data‑URI
+      const canvas = document.createElement('canvas');
+      canvas.width  = el.videoWidth || el.naturalWidth;
+      canvas.height = el.videoHeight || el.naturalHeight;
+      canvas.getContext('2d').drawImage(el, 0, 0);
+      // strip off prefix
+      const rawB64 = canvas.toDataURL('image/jpeg').split(',')[1];
+
+      // send raw base64 in body
+      axios.post(API_URL, rawB64, {
+        params: { api_key: API_KEY },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+      })
+      .then(resp => showResults(resp.data))
+      .catch(err => showError(err));
+    }
+
+    function showResults(data) {
       const preds = Array.isArray(data.predictions) ? data.predictions : [];
-      if (preds.length === 0) {
-        resultsDiv.innerHTML = `
-          <h2>No dice detected</h2>
-          <pre style="font-size:0.8em; background:#f4f4f4; padding:0.5em;">${JSON.stringify(data, null,2)}</pre>
-        `;
+      if (!preds.length) {
+        resultsDiv.innerHTML = `<p>No dice detected.</p><pre>${JSON.stringify(data,null,2)}</pre>`;
         return;
       }
-
-      const dice  = preds.map(p => Number(p.class));
-      const count = dice.length;
-      const total = dice.reduce((s,v)=>s+v,0);
-
+      const rolls = preds.map(p => Number(p.class));
       resultsDiv.innerHTML = `
         <h2>Results</h2>
         <ul>
-          <li><strong>Dice detected:</strong> ${count}</li>
-          <li><strong>Total sum:</strong> ${total}</li>
+          <li><strong>Dice detected:</strong> ${rolls.length}</li>
+          <li><strong>Total sum:</strong> ${rolls.reduce((a,b)=>a+b,0)}</li>
           <li><strong>Individual rolls:</strong>
-            <ul>${dice.map(v=>`<li>${v}</li>`).join('')}</ul>
+            <ul>${rolls.map(v=>`<li>${v}</li>`).join('')}</ul>
           </li>
         </ul>
       `;
-    } catch (e) {
-      console.error('Error calling API:', e);
-      const msg = e.response?.data?.message || e.message;
-      resultsDiv.innerHTML = `<p style="color:red">Error: ${msg}</p>`;
     }
-  }
 
-  // UPLOAD
-  fileInput.addEventListener('change', e => {
-    stopCam();
-    const file = e.target.files[0];
-    if (!file) return;
-    const r = new FileReader();
-    r.onload = () => {
-      const img = new Image();
-      img.onload = () => analyze(strip(toJpegDataURI(img)));
-      img.src = r.result;
-    };
-    r.readAsDataURL(file);
-  });
-
-  // CAMERA
-  startCamBtn.addEventListener('click', async () => {
-    if (stream) { stopCam(); return; }
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});
-      video.srcObject = stream; video.hidden = false; captureBtn.hidden = false;
-      startCamBtn.textContent = 'Stop Camera';
-    } catch (err) { alert('Camera error: '+err.message); }
-  });
-  captureBtn.addEventListener('click', () => analyze(strip(toJpegDataURI(video))));
-
-  function stopCam(){
-    if (stream) stream.getTracks().forEach(t=>t.stop());
-    stream=null; video.hidden=true; captureBtn.hidden=true;
-    startCamBtn.textContent='Start Camera';
-  }
-</script>
+    function showError(err) {
+      console.error(err);
+      const msg = err.response?.data?.message || err.message;
+      resultsDiv.innerHTML = `<p style="color:red;">Error: ${msg}</p>`;
+    }
+  </script>
+</body>
+</html>

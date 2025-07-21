@@ -48,11 +48,12 @@
     }
 
     function imageToBase64(canvas) {
-      return canvas.toDataURL("image/jpeg", 0.9); // include full base64 with prefix
+      return canvas.toDataURL("image/png"); // changed from jpeg to png
     }
 
     async function detectFromCanvas() {
       const base64Image = imageToBase64(canvas);
+      console.log("Base64 image size:", base64Image.length); // debug
 
       const response = await fetch(
         "https://detect.roboflow.com/dice-9uzag/3?api_key=hcMpxDXEVyytWxlYcR00",

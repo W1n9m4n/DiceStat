@@ -1,14 +1,13 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1.0" />
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
   <title>DiceStat</title>
   <style>
     body { font-family: sans-serif; max-width: 480px; margin: 2em auto; padding: 0 1em; }
-    h1 { text-align: center; }
-    video, canvas, img { max-width: 100%; border: 1px solid #ccc; margin-top: 0.5em; }
-    button, input { font-size: 1em; margin: 0.5em 0; display: block; width: 100%; }
+    button, input { font-size: 1em; margin: 0.5em 0; width: 100%; }
+    video, canvas { max-width: 100%; margin-top: 0.5em; }
     #results ul { padding-left: 1.2em; }
   </style>
 </head>
@@ -16,18 +15,15 @@
   <h1>DiceStat</h1>
   <p>Upload a photo or use your camera to analyze dice rolls.</p>
 
-  <!-- FILE UPLOAD -->
-  <label>
-    📁 Upload image:
-    <input type="file" accept="image/*" id="fileInput" />
-  </label>
+  <!-- Upload -->
+  <input type="file" accept="image/*" id="fileInput"/>
 
   <hr/>
 
-  <!-- LIVE CAMERA -->
-  <button id="startCamBtn">📷 Start Camera</button>
+  <!-- Live camera -->
+  <button id="startCamBtn">Start Camera</button>
   <video id="video" autoplay playsinline hidden></video>
-  <button id="captureBtn" hidden>🖼️ Capture & Analyze</button>
+  <button id="captureBtn" hidden>Capture & Analyze</button>
 
   <div id="results"></div>
 
@@ -39,43 +35,42 @@
     const captureBtn  = document.getElementById('captureBtn');
     const resultsDiv  = document.getElementById('results');
     let dataUri = '';
+    let stream = null;
 
-    // --- 1) FILE UPLOAD FLOW ---
+    // 1) Upload
     fileInput.addEventListener('change', e => {
-      stopCamera(); // if camera was running, shut it off
+      stopCamera();
       const file = e.target.files[0];
       if (!file) return;
       const reader = new FileReader();
       reader.onload = () => {
-        dataUri = reader.result;
-        analyzeImage(dataUri);
+        dataUri = reader.result;  // full Data‑URI
+        analyzeImage();
       };
       reader.readAsDataURL(file);
     });
 
-    // --- 2) CAMERA FLOW ---
-    let stream = null;
+    // 2) Start/stop camera
     startCamBtn.addEventListener('click', async () => {
-      if (stream) { return stopCamera(); }
+      if (stream) return stopCamera();
       try {
         stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
         video.srcObject = stream;
         video.hidden = false;
         captureBtn.hidden = false;
-        startCamBtn.textContent = '🛑 Stop Camera';
+        startCamBtn.textContent = 'Stop Camera';
       } catch (err) {
         alert('Could not start camera: ' + err.message);
       }
     });
 
     captureBtn.addEventListener('click', () => {
-      // draw current frame to a hidden canvas
       const canvas = document.createElement('canvas');
       canvas.width  = video.videoWidth;
       canvas.height = video.videoHeight;
       canvas.getContext('2d').drawImage(video, 0, 0);
       dataUri = canvas.toDataURL('image/jpeg');
-      analyzeImage(dataUri);
+      analyzeImage();
     });
 
     function stopCamera() {
@@ -85,23 +80,23 @@
       }
       video.hidden = true;
       captureBtn.hidden = true;
-      startCamBtn.textContent = '📷 Start Camera';
+      startCamBtn.textContent = 'Start Camera';
     }
 
-    // --- COMMON ANALYSIS FUNCTION ---
-    async function analyzeImage(dataUri) {
+    // 3) Analyze (serverless & JSON)
+    async function analyzeImage() {
       resultsDiv.innerHTML = '<p>Analyzing…</p>';
       try {
         const resp = await axios.post(
           'https://serverless.roboflow.com/dice-9uzag/3',
-          { image: dataUri },
+          { image: dataUri },                    // full Data‑URI
           {
             params: { api_key: 'hcMpxDXEVyytWxlYcR00' },
             headers: { 'Content-Type': 'application/json' }
           }
         );
         const preds = resp.data.predictions || [];
-        const dice = preds.map(p => Number(p.class));
+        const dice  = preds.map(p => Number(p.class));
         const count = dice.length;
         const total = dice.reduce((a,b) => a+b, 0);
 
@@ -116,7 +111,6 @@
           </ul>
         `;
       } catch (err) {
-        console.error(err);
         const msg = err.response?.data?.message || err.message;
         resultsDiv.innerHTML = `<p style="color:red;">Error: ${msg}</p>`;
       }

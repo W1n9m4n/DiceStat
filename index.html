@@ -51,14 +51,19 @@
     async function analyzeDataUri(dataUri) {
       resultsDiv.innerHTML = '<p>Analyzing…</p>';
       try {
+        // Build a form‑urlencoded body
+        const body = new URLSearchParams();
+        body.append('image', dataUri);
+
         const resp = await axios.post(
           'https://serverless.roboflow.com/dice-9uzag/3',
-          { image: dataUri },
+          body.toString(),                     // raw urlencoded string
           {
             params: { api_key: 'hcMpxDXEVyytWxlYcR00' },
-            headers: { 'Content-Type': 'application/json' }
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
           }
         );
+
         const preds = resp.data.predictions || [];
         const dice  = preds.map(p => Number(p.class));
         const count = dice.length;

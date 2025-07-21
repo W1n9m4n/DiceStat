@@ -1,112 +1,122 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1.0">
-  <title>DiceStat Face Demo</title>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>DiceStat ✔️</title>
   <style>
-    body { font-family: sans-serif; text-align: center; margin: 1rem; }
-    video, canvas { max-width: 100%; margin-top: 1rem; }
-    #controls button { margin: 0.5rem; }
-    #stats { margin-top: 1rem; }
+    body { font-family: sans-serif; max-width: 600px; margin: 2rem auto; text-align: center; }
+    video, canvas { max-width: 100%; margin-top: 1rem; border: 1px solid #ccc; }
+    button, input { font-size: 1rem; margin: .5rem; }
+    #stats { margin-top: 1rem; font-size: 1.2rem; }
   </style>
 </head>
 <body>
-  <h1>🎲 DiceStat Demo</h1>
 
-  <div id="controls">
-    <button id="startBtn">Start Camera</button>
-    <button id="snapBtn" disabled>Snap Photo</button>
-    <input type="file" id="upload" accept="image/*">
-  </div>
+  <h1>🎲 DiceStat</h1>
+  <p>Snap dice from your camera or choose an image:</p>
+  <button id="startCamBtn">Start Camera</button>
+  <button id="snapBtn" disabled>Snap Photo</button><br/>
+  <input type="file" id="uploadInput" accept="image/*"/>
 
   <video id="video" autoplay playsinline hidden></video>
   <canvas id="canvas" hidden></canvas>
+
   <div id="stats"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/roboflow/dist/roboflow.js"></script>
   <script>
     const MODEL = 'dice-9uzag';
     const VERSION = '3';
-    const KEY = 'hcMpxDXEVyytWxlYcR00'; // your inference key
+    const KEY = 'hcMpxDXEVyytWxlYcR00'; // <-- your inference key
 
     const rf = new Roboflow({ apiKey: KEY });
-    const model = rf.load({ model: MODEL, version: VERSION });
+    const modelPromise = rf.load({ model: MODEL, version: VERSION });
 
+    const startCamBtn = document.getElementById('startCamBtn');
+    const snapBtn = document.getElementById('snapBtn');
+    const uploadInput = document.getElementById('uploadInput');
     const video = document.getElementById('video');
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
-    const startBtn = document.getElementById('startBtn');
-    const snapBtn = document.getElementById('snapBtn');
-    const upload = document.getElementById('upload');
-    const stats = document.getElementById('stats');
+    const statsDiv = document.getElementById('stats');
 
-    let stream;
+    let stream = null;
 
-    startBtn.onclick = async () => {
+    startCamBtn.onclick = async () => {
       if (!stream) {
-        stream = await navigator.mediaDevices.getUserMedia({ video: true });
-        video.srcObject = stream;
-        video.hidden = false;
-        snapBtn.disabled = false;
-        startBtn.textContent = 'Stop Camera';
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ video: true });
+          video.srcObject = stream;
+          video.hidden = false;
+          snapBtn.disabled = false;
+          startCamBtn.textContent = 'Stop Camera';
+        } catch (err) {
+          alert('Camera error: ' + err.message);
+        }
       } else {
         stream.getTracks().forEach(t => t.stop());
         stream = null;
         video.hidden = true;
         snapBtn.disabled = true;
-        startBtn.textContent = 'Start Camera';
+        startCamBtn.textContent = 'Start Camera';
       }
-    };
+    }
 
     snapBtn.onclick = () => {
+      if (!video.videoWidth) return;
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
       ctx.drawImage(video, 0, 0);
+      canvas.hidden = false;
       runInference();
-    };
+    }
 
-    upload.onchange = () => {
-      const file = upload.files[0];
+    uploadInput.onchange = () => {
+      const file = uploadInput.files[0];
+      if (!file) return;
       const img = new Image();
       img.onload = () => {
         canvas.width = img.naturalWidth;
         canvas.height = img.naturalHeight;
         ctx.drawImage(img, 0, 0);
+        canvas.hidden = false;
         runInference();
-      };
+      }
       img.src = URL.createObjectURL(file);
-    };
-
-    async function runInference() {
-      stats.innerText = 'Detecting…';
-      const imgData = canvas.toDataURL('image/jpeg');
-      const predictions = await (await model).predict(imgData);
-      drawBoxes(predictions);
-      updateStats(predictions);
     }
 
-    function drawBoxes(preds) {
+    async function runInference() {
+      statsDiv.textContent = 'Detecting…';
+      const model = await modelPromise;
+      const dataURL = canvas.toDataURL('image/jpeg');
+      const preds = await model.predict(dataURL);
+
+      // draw bounding boxes
       ctx.lineWidth = 2;
       ctx.strokeStyle = 'lime';
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       preds.forEach(p => {
-        const [x, y, w, h] = [p.x, p.y, p.width, p.height];
-        ctx.strokeRect(x - w/2, y - h/2, w, h);
-        ctx.fillText(p.class + ` (${(p.confidence*100).toFixed(1)}%)`, x - w/2, y - h/2 - 4);
+        const x1 = p.x - p.width/2;
+        const y1 = p.y - p.height/2;
+        ctx.strokeRect(x1, y1, p.width, p.height);
+        ctx.fillStyle = 'lime';
+        ctx.fillText(p.class + ' ' + (p.confidence*100).toFixed(0) + '%', x1, y1 - 4);
       });
-      canvas.hidden = false;
-    }
 
-    function updateStats(preds) {
-      if (!preds.length) return stats.textContent = 'No dice detected.';
+      // compute rolls
       const rolls = preds.map(p => Number(p.class));
-      stats.innerHTML = `
-        Dice: ${rolls.length}<br>
-        Sum: ${rolls.reduce((a,b)=>a+b,0)}<br>
-        Rolls: ${rolls.join(', ')}
-      `;
+      if (!rolls.length) {
+        statsDiv.textContent = 'No dice detected.';
+      } else {
+        statsDiv.innerHTML = `
+          <strong>Dice:</strong> ${rolls.length} &nbsp;  
+          <strong>Sum:</strong> ${rolls.reduce((a,b)=>a+b,0)}<br/>
+          <strong>Rolls:</strong> ${rolls.join(', ')}
+        `;
+      }
     }
   </script>
+
 </body>
 </html>

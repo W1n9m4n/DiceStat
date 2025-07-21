@@ -40,120 +40,130 @@
 
   <div id="results"></div>
 
+  <!-- Axios CDN -->
   <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
   <script>
-    const API_URL = 'https://serverless.roboflow.com/dice-9uzag/3';
-    const API_KEY = 'hcMpxDXEVyytWxlYcR00';  // replace with your inference key
+    document.addEventListener('DOMContentLoaded', () => {
+      const API_URL        = 'https://serverless.roboflow.com/dice-9uzag/3';
+      const API_KEY        = 'hcMpxDXEVyytWxlYcR00';  // replace with your inference key
 
-    const urlInput       = document.getElementById('urlInput');
-    const urlAnalyzeBtn  = document.getElementById('urlAnalyzeBtn');
-    const fileInput      = document.getElementById('fileInput');
-    const startCamBtn    = document.getElementById('startCamBtn');
-    const video          = document.getElementById('video');
-    const captureBtn     = document.getElementById('captureBtn');
-    const resultsDiv     = document.getElementById('results');
-    let stream = null;
+      const urlInput       = document.getElementById('urlInput');
+      const urlAnalyzeBtn  = document.getElementById('urlAnalyzeBtn');
+      const fileInput      = document.getElementById('fileInput');
+      const startCamBtn    = document.getElementById('startCamBtn');
+      const video          = document.getElementById('video');
+      const captureBtn     = document.getElementById('captureBtn');
+      const resultsDiv     = document.getElementById('results');
+      let stream = null;
 
-    // --- 1) URL Mode ---
-    urlAnalyzeBtn.addEventListener('click', async () => {
-      const imageUrl = urlInput.value.trim();
-      if (!imageUrl) return alert('Please enter an image URL');
-      resultsDiv.innerHTML = '<p>Analyzing via URL…</p>';
-      try {
-        const resp = await axios.post(
-          API_URL,
-          null,
-          {
-            params: { api_key: API_KEY, image: imageUrl }
-          }
-        );
-        showResults(resp.data);
-      } catch (err) {
-        showError(err);
+      // Utility: draw element into canvas → JPEG Data‑URI
+      function toJpegDataURI(el) {
+        const w = el.videoWidth || el.naturalWidth;
+        const h = el.videoHeight || el.naturalHeight;
+        const c = document.createElement('canvas');
+        c.width = w; c.height = h;
+        c.getContext('2d').drawImage(el, 0, 0, w, h);
+        return c.toDataURL('image/jpeg');
+      }
+      function strip(dataUri) { return dataUri.split(',')[1]; }
+
+      // Display results or fallback
+      function showResults(data) {
+        const preds = Array.isArray(data.predictions) ? data.predictions : [];
+        if (!preds.length) {
+          resultsDiv.innerHTML = `
+            <p>No dice detected.</p>
+            <pre>${JSON.stringify(data, null, 2)}</pre>
+          `;
+          return;
+        }
+        const rolls = preds.map(p => Number(p.class));
+        resultsDiv.innerHTML = `
+          <h2>Results</h2>
+          <ul>
+            <li><strong>Dice detected:</strong> ${rolls.length}</li>
+            <li><strong>Total sum:</strong> ${rolls.reduce((a,b)=>a+b,0)}</li>
+            <li><strong>Individual rolls:</strong>
+              <ul>${rolls.map(v=>`<li>${v}</li>`).join('')}</ul>
+            </li>
+          </ul>
+        `;
+      }
+
+      function showError(err) {
+        console.error(err);
+        const msg = err.response?.data?.message || err.message;
+        resultsDiv.innerHTML = `<p style="color:red;">Error: ${msg}</p>`;
+      }
+
+      // 1) URL Mode
+      urlAnalyzeBtn.addEventListener('click', async () => {
+        const imageUrl = urlInput.value.trim();
+        if (!imageUrl) return alert('Please enter an image URL');
+        resultsDiv.innerHTML = '<p>Analyzing via URL…</p>';
+        try {
+          const resp = await axios.post(
+            API_URL,
+            null,
+            { params: { api_key: API_KEY, image: imageUrl } }
+          );
+          showResults(resp.data);
+        } catch (err) {
+          showError(err);
+        }
+      });
+
+      // 2) UPLOAD Mode
+      fileInput.addEventListener('change', e => {
+        stopCamera();
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = () => {
+          const img = new Image();
+          img.onload = () => analyzeCanvas(img);
+          img.src = reader.result;
+        };
+        reader.readAsDataURL(file);
+      });
+
+      // 3) CAMERA Mode
+      startCamBtn.addEventListener('click', async () => {
+        if (stream) { stopCamera(); return; }
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+          video.srcObject = stream;
+          video.hidden = false;
+          captureBtn.hidden = false;
+          startCamBtn.textContent = '🛑 Stop Camera';
+        } catch (err) {
+          alert('Camera error: ' + err.message);
+        }
+      });
+      captureBtn.addEventListener('click', () => analyzeCanvas(video));
+
+      function stopCamera() {
+        if (stream) stream.getTracks().forEach(t => t.stop());
+        stream = null;
+        video.hidden = true;
+        captureBtn.hidden = true;
+        startCamBtn.textContent = '📷 Start Camera';
+      }
+
+      // Shared: rasterize → strip → POST raw base64
+      function analyzeCanvas(el) {
+        resultsDiv.innerHTML = '<p>Analyzing…</p>';
+        const dataUri = toJpegDataURI(el);
+        const rawB64  = strip(dataUri);
+
+        axios.post(API_URL, rawB64, {
+          params: { api_key: API_KEY },
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+        })
+        .then(resp => showResults(resp.data))
+        .catch(showError);
       }
     });
-
-    // --- 2) UPLOAD Mode ---
-    fileInput.addEventListener('change', e => {
-      stopCamera();
-      const file = e.target.files[0];
-      if (!file) return;
-      const reader = new FileReader();
-      reader.onload = () => {
-        const img = new Image();
-        img.onload = () => analyzeCanvas(img);
-        img.src = reader.result;
-      };
-      reader.readAsDataURL(file);
-    });
-
-    // --- 3) CAMERA Mode ---
-    startCamBtn.addEventListener('click', async () => {
-      if (stream) { stopCamera(); return; }
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-        video.srcObject = stream;
-        video.hidden = false;
-        captureBtn.hidden = false;
-        startCamBtn.textContent = '🛑 Stop Camera';
-      } catch (err) {
-        alert('Camera error: ' + err.message);
-      }
-    });
-    captureBtn.addEventListener('click', () => analyzeCanvas(video));
-
-    function stopCamera() {
-      if (stream) stream.getTracks().forEach(t => t.stop());
-      stream = null;
-      video.hidden = true;
-      captureBtn.hidden = true;
-      startCamBtn.textContent = '📷 Start Camera';
-    }
-
-    // --- Shared Helpers ---
-    function analyzeCanvas(el) {
-      resultsDiv.innerHTML = '<p>Analyzing…</p>';
-      // draw to canvas → JPEG Data‑URI
-      const canvas = document.createElement('canvas');
-      canvas.width  = el.videoWidth || el.naturalWidth;
-      canvas.height = el.videoHeight || el.naturalHeight;
-      canvas.getContext('2d').drawImage(el, 0, 0);
-      // strip off prefix
-      const rawB64 = canvas.toDataURL('image/jpeg').split(',')[1];
-
-      // send raw base64 in body
-      axios.post(API_URL, rawB64, {
-        params: { api_key: API_KEY },
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
-      })
-      .then(resp => showResults(resp.data))
-      .catch(err => showError(err));
-    }
-
-    function showResults(data) {
-      const preds = Array.isArray(data.predictions) ? data.predictions : [];
-      if (!preds.length) {
-        resultsDiv.innerHTML = `<p>No dice detected.</p><pre>${JSON.stringify(data,null,2)}</pre>`;
-        return;
-      }
-      const rolls = preds.map(p => Number(p.class));
-      resultsDiv.innerHTML = `
-        <h2>Results</h2>
-        <ul>
-          <li><strong>Dice detected:</strong> ${rolls.length}</li>
-          <li><strong>Total sum:</strong> ${rolls.reduce((a,b)=>a+b,0)}</li>
-          <li><strong>Individual rolls:</strong>
-            <ul>${rolls.map(v=>`<li>${v}</li>`).join('')}</ul>
-          </li>
-        </ul>
-      `;
-    }
-
-    function showError(err) {
-      console.error(err);
-      const msg = err.response?.data?.message || err.message;
-      resultsDiv.innerHTML = `<p style="color:red;">Error: ${msg}</p>`;
-    }
   </script>
 </body>
 </html>

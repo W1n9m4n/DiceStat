@@ -16,19 +16,18 @@
   <h1>DiceStat</h1>
   <p>Upload a photo or use your camera to analyze dice rolls.</p>
 
-  <!-- 1) UPLOAD FLOW -->
-  <input type="file" accept="image/*" id="fileInput" />
+  <!-- UPLOAD -->
+  <input type="file" accept="image/*" id="fileInput"/>
 
   <hr/>
 
-  <!-- 2) LIVE CAMERA FLOW -->
+  <!-- LIVE CAMERA -->
   <button id="startCamBtn">Start Camera</button>
   <video id="video" autoplay playsinline hidden></video>
-  <button id="captureBtn" hidden>Capture & Analyze</button>
+  <button id="captureBtn" hidden>Capture &amp; Analyze</button>
 
   <div id="results"></div>
 
-  <!-- Axios CDN -->
   <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
   <script>
     const fileInput   = document.getElementById('fileInput');
@@ -38,36 +37,38 @@
     const resultsDiv  = document.getElementById('results');
     let stream = null;
 
-    // 1) Draw element into a canvas & get JPEG Data-URI
+    // 1) Resize image to 525x525 (training size), rasterize to JPEG Data‑URI
     function toJpegDataURI(el) {
-      const w = el.videoWidth || el.naturalWidth;
-      const h = el.videoHeight || el.naturalHeight;
+      const W = el.videoWidth || el.naturalWidth;
+      const H = el.videoHeight || el.naturalHeight;
+      const TARGET = 525;
+      // scale to fit inside TARGET×TARGET
+      const scale = Math.min(TARGET/W, TARGET/H);
+      const w = Math.round(W * scale);
+      const h = Math.round(H * scale);
+
       const canvas = document.createElement('canvas');
       canvas.width = w;
       canvas.height = h;
-      canvas.getContext('2d').drawImage(el, 0, 0, w, h);
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(el, 0, 0, w, h);
       return canvas.toDataURL('image/jpeg');
     }
 
-    // 2) Strip off the "data:image/jpeg;base64," prefix
+    // 2) Strip off "data:image/jpeg;base64," prefix → raw Base64
     function stripDataUri(dataUri) {
       return dataUri.split(',')[1];
     }
 
-    // 3) Send raw Base64 in x-www-form-urlencoded body to Roboflow Serverless V2
+    // 3) POST raw Base64 as body (x-www-form-urlencoded) to Serverless API V2
     async function analyzeRawBase64(rawB64) {
       resultsDiv.innerHTML = '<p>Analyzing…</p>';
       try {
-        const body = new URLSearchParams();
-        body.append('image', rawB64);
-
+        const url = 'https://serverless.roboflow.com/dice-9uzag/3';
         const resp = await axios.post(
-          'https://serverless.roboflow.com/dice-9uzag/3',
-          body.toString(),
-          {
-            params: { api_key: 'hcMpxDXEVyytWxlYcR00' },
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
-          }
+          url + `?api_key=hcMpxDXEVyytWxlYcR00`,
+          rawB64,  // raw base64 string, no key name
+          { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
         );
 
         const dice = (resp.data.predictions || []).map(p => Number(p.class));
@@ -90,7 +91,7 @@
       }
     }
 
-    // UPLOAD FLOW
+    // UPLOAD flow
     fileInput.addEventListener('change', e => {
       stopCamera();
       const file = e.target.files[0];
@@ -107,12 +108,9 @@
       reader.readAsDataURL(file);
     });
 
-    // START/STOP CAMERA
+    // CAMERA start/stop
     startCamBtn.addEventListener('click', async () => {
-      if (stream) {
-        stopCamera();
-        return;
-      }
+      if (stream) { stopCamera(); return; }
       try {
         stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
         video.srcObject = stream;
@@ -124,13 +122,12 @@
       }
     });
 
-    // CAPTURE & ANALYZE from LIVE STREAM
+    // Capture & analyze from video
     captureBtn.addEventListener('click', () => {
       const dataUri = toJpegDataURI(video);
       analyzeRawBase64(stripDataUri(dataUri));
     });
 
-    // STOP CAMERA
     function stopCamera() {
       if (stream) {
         stream.getTracks().forEach(t => t.stop());

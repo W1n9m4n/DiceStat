@@ -1,171 +1,148 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-  <title>DiceStat</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Roboflow Video Inference Demo</title>
   <style>
-    body { font-family: sans-serif; max-width: 480px; margin: 2em auto; padding: 0 1em; }
-    h1 { text-align: center; }
-    input, button { font-size: 1em; margin: 0.5em 0; width: 100%; }
-    video, canvas { max-width: 100%; margin-top: 0.5em; }
-    #results ul { padding-left: 1.2em; }
-    pre { background: #f4f4f4; padding: 0.5em; overflow-x: auto; }
+    body { font-family: Arial, sans-serif; margin: 2rem; }
+    input, button { font-size: 1rem; padding: 0.5rem; }
+    #status { margin-top: 1rem; white-space: pre-wrap; }
   </style>
 </head>
 <body>
-  <h1>DiceStat</h1>
-  <p>Choose one of three ways to analyze your dice:</p>
+  <h1>Roboflow Video Inference Demo</h1>
 
-  <!-- 1) IMAGE URL -->
-  <label>
-    🔗 Image URL:
-    <input type="url" id="urlInput" placeholder="https://example.com/mydice.jpg"/>
-  </label>
-  <button id="urlAnalyzeBtn">Analyze via URL</button>
+  <input type="file" id="videoInput" accept="video/mp4,video/avi,video/mkv,video/webm" />
+  <br /><br />
+  <button id="startBtn" disabled>Start Video Inference</button>
 
-  <hr/>
+  <pre id="status"></pre>
 
-  <!-- 2) UPLOAD -->
-  <label>
-    📁 Upload image:
-    <input type="file" accept="image/*" id="fileInput"/>
-  </label>
-
-  <hr/>
-
-  <!-- 3) LIVE CAMERA -->
-  <button id="startCamBtn">📷 Start Camera</button>
-  <video id="video" autoplay playsinline hidden></video>
-  <button id="captureBtn" hidden>🖼️ Capture & Analyze</button>
-
-  <div id="results"></div>
-
-  <!-- Axios CDN -->
-  <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
   <script>
-    document.addEventListener('DOMContentLoaded', () => {
-      const API_KEY = 'hcMpxDXEVyytWxlYcR00'; // ← replace with your inference key
-      const BASE_URL = 'https://detect.roboflow.com/dice-9uzag/3';
+    const API_KEY = "YOUR_WORKSPACE_API_KEY";  // <<-- PUT YOUR API KEY HERE
+    const MODEL_ID = "your_model_id";           // <<-- Your model slug here
+    const MODEL_VERSION = "1";                   // <<-- Model version
 
-      const urlInput      = document.getElementById('urlInput');
-      const urlAnalyzeBtn = document.getElementById('urlAnalyzeBtn');
-      const fileInput     = document.getElementById('fileInput');
-      const startCamBtn   = document.getElementById('startCamBtn');
-      const video         = document.getElementById('video');
-      const captureBtn    = document.getElementById('captureBtn');
-      const resultsDiv    = document.getElementById('results');
-      let stream = null;
+    const videoInput = document.getElementById("videoInput");
+    const startBtn = document.getElementById("startBtn");
+    const statusEl = document.getElementById("status");
 
-      // Draw <img> or <video> into canvas → JPEG Data‑URI
-      function toJpegDataURI(el) {
-        const w = el.videoWidth || el.naturalWidth;
-        const h = el.videoHeight || el.naturalHeight;
-        const c = document.createElement('canvas');
-        c.width = w; c.height = h;
-        c.getContext('2d').drawImage(el, 0, 0, w, h);
-        return c.toDataURL('image/jpeg');
-      }
-      // Strip off "data:image/jpeg;base64," → raw Base64
-      function strip(dataUri) {
-        return dataUri.split(',')[1];
-      }
+    let selectedFile;
 
-      function showResults(data) {
-        const preds = Array.isArray(data.predictions) ? data.predictions : [];
-        if (preds.length === 0) {
-          resultsDiv.innerHTML = `
-            <h2>No dice detected</h2>
-            <pre>${JSON.stringify(data, null, 2)}</pre>
-          `;
-          return;
-        }
-        const rolls = preds.map(p => Number(p.class));
-        resultsDiv.innerHTML = `
-          <h2>Results</h2>
-          <ul>
-            <li><strong>Dice detected:</strong> ${rolls.length}</li>
-            <li><strong>Total sum:</strong> ${rolls.reduce((a,b)=>a+b,0)}</li>
-            <li><strong>Individual rolls:</strong>
-              <ul>${rolls.map(v=>`<li>${v}</li>`).join('')}</ul>
-            </li>
-          </ul>
-        `;
-      }
-
-      function showError(err) {
-        console.error(err);
-        const msg = err.response?.data?.message || err.message;
-        resultsDiv.innerHTML = `<p style="color:red;">Error: ${msg}</p>`;
-      }
-
-      // --- 1) URL Mode ---
-      urlAnalyzeBtn.addEventListener('click', async () => {
-        const imageUrl = urlInput.value.trim();
-        if (!imageUrl) return alert('Please enter an image URL');
-        resultsDiv.innerHTML = '<p>Analyzing via URL…</p>';
-        try {
-          const resp = await axios.post(
-            `${BASE_URL}?api_key=${API_KEY}&image=${encodeURIComponent(imageUrl)}`,
-            null,
-            { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
-          );
-          showResults(resp.data);
-        } catch (err) {
-          showError(err);
-        }
-      });
-
-      // --- 2) UPLOAD Mode ---
-      fileInput.addEventListener('change', e => {
-        stopCamera();
-        const file = e.target.files[0];
-        if (!file) return;
-        const reader = new FileReader();
-        reader.onload = () => {
-          const img = new Image();
-          img.onload = () => analyzeCanvas(img);
-          img.src = reader.result;
-        };
-        reader.readAsDataURL(file);
-      });
-
-      // --- 3) CAMERA Mode ---
-      startCamBtn.addEventListener('click', async () => {
-        if (stream) { stopCamera(); return; }
-        try {
-          stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-          video.srcObject = stream;
-          video.hidden = false;
-          captureBtn.hidden = false;
-          startCamBtn.textContent = '🛑 Stop Camera';
-        } catch (err) {
-          alert('Could not start camera: ' + err.message);
-        }
-      });
-      captureBtn.addEventListener('click', () => analyzeCanvas(video));
-
-      function stopCamera() {
-        if (stream) stream.getTracks().forEach(t => t.stop());
-        stream = null;
-        video.hidden = true;
-        captureBtn.hidden = true;
-        startCamBtn.textContent = '📷 Start Camera';
-      }
-
-      // Shared: rasterize → strip → POST raw Base64
-      function analyzeCanvas(el) {
-        resultsDiv.innerHTML = '<p>Analyzing…</p>';
-        const rawB64 = strip(toJpegDataURI(el));
-        axios.post(
-          `${BASE_URL}?api_key=${API_KEY}`,
-          rawB64,
-          { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
-        )
-        .then(resp => showResults(resp.data))
-        .catch(showError);
+    videoInput.addEventListener("change", () => {
+      if (videoInput.files.length > 0) {
+        selectedFile = videoInput.files[0];
+        startBtn.disabled = false;
+        statusEl.textContent = "";
+      } else {
+        selectedFile = null;
+        startBtn.disabled = true;
       }
     });
+
+    startBtn.addEventListener("click", async () => {
+      if (!selectedFile) return alert("Please select a video file.");
+
+      startBtn.disabled = true;
+      statusEl.textContent = "Requesting upload signed URL...";
+
+      try {
+        // Step 1: Get signed upload URL
+        const res1 = await fetch(`https://api.roboflow.com/video_upload_signed_url/?api_key=${API_KEY}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ file_name: selectedFile.name }),
+        });
+        const data1 = await res1.json();
+        const signedUrl = data1.signed_url;
+        if (!signedUrl) throw new Error("Failed to get signed URL");
+
+        statusEl.textContent = "Uploading video to Roboflow...";
+        
+        // Step 2: Upload video file to signed URL
+        await fetch(signedUrl, {
+          method: "PUT",
+          headers: { "Content-Type": "application/octet-stream" },
+          body: selectedFile,
+        });
+        statusEl.textContent = "Video uploaded successfully.";
+
+        // Extract public video URL (remove query params)
+        const publicVideoUrl = signedUrl.split("?")[0];
+
+        statusEl.textContent += "\nScheduling video inference job...";
+
+        // Step 3: Schedule inference job
+        const jobBody = {
+          input_url: publicVideoUrl,
+          infer_fps: 5,
+          models: [
+            {
+              model_id: MODEL_ID,
+              model_version: MODEL_VERSION,
+              inference_type: "object-detection",
+              inference_params: { confidence: 0.4 },
+            },
+          ],
+        };
+
+        const res2 = await fetch(`https://api.roboflow.com/videoinfer/?api_key=${API_KEY}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(jobBody),
+        });
+
+        const data2 = await res2.json();
+        if (!data2.job_id) throw new Error("Failed to schedule job");
+
+        statusEl.textContent += `\nJob scheduled. Job ID: ${data2.job_id}`;
+        statusEl.textContent += "\nPolling for job completion every 60 seconds...";
+
+        // Step 4: Poll for job status
+        await pollJobStatus(data2.job_id);
+      } catch (error) {
+        statusEl.textContent += `\nError: ${error.message}`;
+      }
+      startBtn.disabled = false;
+    });
+
+    async function pollJobStatus(jobId) {
+      let status = 1;
+      let retries = 0;
+      const maxRetries = 20;
+
+      while (status === 1 && retries < maxRetries) {
+        statusEl.textContent += `\nChecking job status... (attempt ${retries + 1})`;
+        try {
+          const res = await fetch(`https://api.roboflow.com/videoinfer/?api_key=${API_KEY}&job_id=${jobId}`);
+          const data = await res.json();
+          status = data.status;
+
+          if (status === 0) {
+            statusEl.textContent += "\n✅ Job complete!";
+            statusEl.textContent += `\nDownload results: ${data.output_signed_url}`;
+            // Optionally, you can fetch and parse the JSON here if CORS allows.
+            return;
+          } else if (status > 1) {
+            statusEl.textContent += "\n❌ Job failed.";
+            return;
+          } else {
+            statusEl.textContent += "\n⏳ Still processing...";
+          }
+        } catch (err) {
+          statusEl.textContent += `\nPolling error: ${err.message}`;
+        }
+
+        retries++;
+        if (status !== 0) {
+          await new Promise((r) => setTimeout(r, 60000)); // wait 60 sec before next poll
+        }
+      }
+      if (retries >= maxRetries) {
+        statusEl.textContent += "\nPolling timed out.";
+      }
+    }
   </script>
 </body>
 </html>

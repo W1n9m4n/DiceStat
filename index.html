@@ -2,140 +2,88 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Dice Pip Detector - Single Capture</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>DiceStat</title>
   <style>
-    body { font-family: Arial, sans-serif; margin: 20px; }
-    video, canvas { border: 1px solid black; max-width: 100%; height: auto; display: block; margin-bottom: 10px; }
-    #summary { margin-top: 20px; font-size: 1.2rem; }
-    button { font-size: 1.2rem; padding: 10px 20px; margin-bottom: 10px; }
+    body { font-family: sans-serif; max-width: 480px; margin: 2em auto; padding: 0 1em; }
+    button, input { font-size: 1em; margin: 0.5em 0; }
+    #results { margin-top: 1em; }
+    #results ul { padding-left: 1.2em; }
   </style>
 </head>
 <body>
-  <h1>Dice Pip Detector</h1>
-  <button id="startBtn">Start Camera</button>
-  <button id="captureBtn" disabled>Capture & Analyze</button>
 
-  <video id="video" width="640" height="480" autoplay muted playsinline></video>
-  <canvas id="canvas" width="640" height="480"></canvas>
+  <h1>DiceStat</h1>
+  <p>Capture a photo of your dice and get instant stats!</p>
 
-  <div id="summary">Press "Start Camera" and then "Capture & Analyze"</div>
+  <!-- File input that invokes the camera on mobile -->
+  <input type="file" accept="image/*" capture="environment" id="fileInput" />
 
+  <!-- Or you could wire up getUserMedia for a live preview if you prefer -->
+
+  <button id="analyzeBtn" disabled>Analyze Dice</button>
+
+  <div id="results"></div>
+
+  <!-- Axios from CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
   <script>
-    const video = document.getElementById("video");
-    const canvas = document.getElementById("canvas");
-    const ctx = canvas.getContext("2d");
-    const startBtn = document.getElementById("startBtn");
-    const captureBtn = document.getElementById("captureBtn");
-    const summaryDiv = document.getElementById("summary");
+    const fileInput = document.getElementById('fileInput');
+    const analyzeBtn = document.getElementById('analyzeBtn');
+    const resultsDiv = document.getElementById('results');
 
-    const API_URL = "https://detect.roboflow.com/dice-9uzag/3?api_key=hcMpxDXEVyytWxlYcR00";
+    let base64Image = '';
 
-    async function startCamera() {
+    // Read selected file as Base64
+    fileInput.addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        base64Image = reader.result.split(',')[1];  // strip off data:image/...;base64,
+        analyzeBtn.disabled = false;
+      };
+      reader.readAsDataURL(file);
+    });
+
+    analyzeBtn.addEventListener('click', async () => {
+      if (!base64Image) return;
+      resultsDiv.innerHTML = '<p>Analyzing…</p>';
+
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
-        video.srcObject = stream;
-        await video.play();
-        captureBtn.disabled = false;
-        summaryDiv.textContent = "Camera started. Click 'Capture & Analyze' to detect dice.";
+        const response = await axios.post(
+          'https://serverless.roboflow.com/dice-9uzag/3',
+          base64Image,
+          {
+            params: { api_key: 'hcMpxDXEVyytWxlYcR00' },
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+          }
+        );
+
+        const preds = response.data.predictions || [];
+        // Extract the integer label for each detected die
+        const diceValues = preds.map(p => Number(p.class)); 
+        const count = diceValues.length;
+        const total = diceValues.reduce((sum,v) => sum+v, 0);
+
+        // Display
+        resultsDiv.innerHTML = `
+          <h2>Results</h2>
+          <ul>
+            <li><strong>Number of dice:</strong> ${count}</li>
+            <li><strong>Total sum:</strong> ${total}</li>
+            <li><strong>Individual rolls:</strong>
+              <ul>
+                ${diceValues.map(v => `<li>${v}</li>`).join('')}
+              </ul>
+            </li>
+          </ul>
+        `;
       } catch (err) {
-        summaryDiv.textContent = `Camera access error: ${err.message}`;
+        console.error(err);
+        resultsDiv.innerHTML = `<p style="color:red;">Error: ${err.message}</p>`;
       }
-    }
-
-    function getBase64FromCanvas(canvas) {
-      // Get base64 with prefix "data:image/jpeg;base64,..."
-      return canvas.toDataURL("image/jpeg", 0.9);
-    }
-
-    async function detectDice(base64Image) {
-      const response = await fetch(API_URL, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({ image: base64Image })
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Detection failed: ${response.status} ${errorText}`);
-      }
-
-      return response.json();
-    }
-
-    function drawBoundingBoxes(predictions) {
-      predictions.forEach(pred => {
-        const { x, y, width, height, class: label, confidence } = pred;
-        // The API returns relative coords (0-1) - convert to canvas size
-        const canvasX = x * canvas.width;
-        const canvasY = y * canvas.height;
-        const canvasW = width * canvas.width;
-        const canvasH = height * canvas.height;
-
-        // Draw rectangle
-        ctx.strokeStyle = "lime";
-        ctx.lineWidth = 3;
-        ctx.strokeRect(canvasX - canvasW / 2, canvasY - canvasH / 2, canvasW, canvasH);
-
-        // Draw label background
-        ctx.fillStyle = "lime";
-        ctx.font = "18px Arial";
-        const text = `${label} (${(confidence * 100).toFixed(1)}%)`;
-        const textWidth = ctx.measureText(text).width;
-        const padding = 4;
-        ctx.fillRect(canvasX - canvasW / 2, canvasY - canvasH / 2 - 24, textWidth + padding * 2, 22);
-
-        // Draw label text
-        ctx.fillStyle = "black";
-        ctx.fillText(text, canvasX - canvasW / 2 + padding, canvasY - canvasH / 2 - 6);
-      });
-    }
-
-    async function captureAndAnalyze() {
-      try {
-        // Draw current video frame to canvas
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-        const base64Image = getBase64FromCanvas(canvas);
-
-        summaryDiv.textContent = "Analyzing...";
-
-        const data = await detectDice(base64Image);
-
-        // Clear previous overlays by redrawing video frame first
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-        if (!data.predictions || data.predictions.length === 0) {
-          summaryDiv.textContent = "No dice detected.";
-          return;
-        }
-
-        // Draw bounding boxes and labels
-        drawBoundingBoxes(data.predictions);
-
-        // Summarize counts per pip
-        const counts = {};
-        data.predictions.forEach(pred => {
-          const label = pred.class;
-          counts[label] = (counts[label] || 0) + 1;
-        });
-
-        let summaryText = "Detected dice:\n";
-        for (const [pip, count] of Object.entries(counts)) {
-          summaryText += ` - ${count} dice with ${pip} pip${pip !== "1" ? "s" : ""}\n`;
-        }
-
-        summaryDiv.textContent = summaryText;
-      } catch (err) {
-        summaryDiv.textContent = `Error: ${err.message}`;
-      }
-    }
-
-    startBtn.addEventListener("click", startCamera);
-    captureBtn.addEventListener("click", captureAndAnalyze);
+    });
   </script>
 </body>
 </html>

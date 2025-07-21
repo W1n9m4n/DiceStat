@@ -6,7 +6,6 @@
   <title>DiceStat</title>
   <style>
     body { font-family: sans-serif; max-width: 480px; margin: 2em auto; padding: 0 1em; }
-    h1 { text-align: center; }
     input, button { font-size: 1em; margin: 0.5em 0; width: 100%; }
     video, canvas { max-width: 100%; margin-top: 0.5em; }
     #results ul { padding-left: 1.2em; }
@@ -14,22 +13,18 @@
 </head>
 <body>
   <h1>DiceStat</h1>
-  <p>Upload a photo or use your camera to analyze dice rolls.</p>
+  <p>Upload or live‑capture a photo of dice and get stats.</p>
 
-  <!-- UPLOAD -->
   <input type="file" accept="image/*" id="fileInput"/>
-
   <hr/>
-
-  <!-- LIVE CAMERA -->
   <button id="startCamBtn">Start Camera</button>
   <video id="video" autoplay playsinline hidden></video>
-  <button id="captureBtn" hidden>Capture &amp; Analyze</button>
-
+  <button id="captureBtn" hidden>Capture & Analyze</button>
   <div id="results"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
   <script>
+    const key = 'hcMpxDXEVyytWxlYcR00';
     const fileInput   = document.getElementById('fileInput');
     const startCamBtn = document.getElementById('startCamBtn');
     const video       = document.getElementById('video');
@@ -37,105 +32,79 @@
     const resultsDiv  = document.getElementById('results');
     let stream = null;
 
-    // 1) Resize image to 525x525 (training size), rasterize to JPEG Data‑URI
+    // draw to canvas → JPEG Data‑URI
     function toJpegDataURI(el) {
       const W = el.videoWidth || el.naturalWidth;
       const H = el.videoHeight || el.naturalHeight;
-      const TARGET = 525;
-      // scale to fit inside TARGET×TARGET
-      const scale = Math.min(TARGET/W, TARGET/H);
-      const w = Math.round(W * scale);
-      const h = Math.round(H * scale);
-
-      const canvas = document.createElement('canvas');
-      canvas.width = w;
-      canvas.height = h;
-      const ctx = canvas.getContext('2d');
-      ctx.drawImage(el, 0, 0, w, h);
-      return canvas.toDataURL('image/jpeg');
+      const c = document.createElement('canvas');
+      c.width = W; c.height = H;
+      c.getContext('2d').drawImage(el, 0, 0);
+      return c.toDataURL('image/jpeg');
     }
+    // strip prefix → raw base64
+    function strip(dataUri) { return dataUri.split(',')[1]; }
 
-    // 2) Strip off "data:image/jpeg;base64," prefix → raw Base64
-    function stripDataUri(dataUri) {
-      return dataUri.split(',')[1];
-    }
-
-    // 3) POST raw Base64 as body (x-www-form-urlencoded) to Serverless API V2
-    async function analyzeRawBase64(rawB64) {
+    // NEW: wrap in { image: {type, value}, api_key }
+    async function analyze(rawB64) {
       resultsDiv.innerHTML = '<p>Analyzing…</p>';
       try {
-        const url = 'https://serverless.roboflow.com/dice-9uzag/3';
+        const payload = {
+          api_key: key,
+          image: { type: 'base64', value: rawB64 }
+        };
         const resp = await axios.post(
-          url + `?api_key=hcMpxDXEVyytWxlYcR00`,
-          rawB64,  // raw base64 string, no key name
-          { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+          'https://serverless.roboflow.com/dice-9uzag/3',
+          payload,
+          { headers: { 'Content-Type': 'application/json' } }
         );
 
         const dice = (resp.data.predictions || []).map(p => Number(p.class));
-        const count = dice.length;
-        const total = dice.reduce((sum, v) => sum + v, 0);
-
+        const count = dice.length, total = dice.reduce((s,v)=>s+v,0);
         resultsDiv.innerHTML = `
           <h2>Results</h2>
           <ul>
-            <li><strong>Dice detected:</strong> ${count}</li>
-            <li><strong>Total sum:</strong> ${total}</li>
-            <li><strong>Individual rolls:</strong>
-              <ul>${dice.map(v => `<li>${v}</li>`).join('')}</ul>
+            <li><strong>Dice:</strong> ${count}</li>
+            <li><strong>Total:</strong> ${total}</li>
+            <li><strong>Rolls:</strong>
+              <ul>${dice.map(v=>`<li>${v}</li>`).join('')}</ul>
             </li>
-          </ul>
-        `;
-      } catch (err) {
-        const msg = err.response?.data?.message || err.message;
-        resultsDiv.innerHTML = `<p style="color:red;">Error: ${msg}</p>`;
+          </ul>`;
+      } catch (e) {
+        const msg = e.response?.data?.message || e.message;
+        resultsDiv.innerHTML = `<p style="color:red">Error: ${msg}</p>`;
       }
     }
 
-    // UPLOAD flow
+    // UPLOAD
     fileInput.addEventListener('change', e => {
-      stopCamera();
+      stopCam();
       const file = e.target.files[0];
       if (!file) return;
-      const reader = new FileReader();
-      reader.onload = () => {
+      const r = new FileReader();
+      r.onload = () => {
         const img = new Image();
-        img.onload = () => {
-          const dataUri = toJpegDataURI(img);
-          analyzeRawBase64(stripDataUri(dataUri));
-        };
-        img.src = reader.result;
+        img.onload = () => analyze(strip(toJpegDataURI(img)));
+        img.src = r.result;
       };
-      reader.readAsDataURL(file);
+      r.readAsDataURL(file);
     });
 
-    // CAMERA start/stop
+    // CAMERA
     startCamBtn.addEventListener('click', async () => {
-      if (stream) { stopCamera(); return; }
+      if (stream) return stopCam();
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-        video.srcObject = stream;
-        video.hidden = false;
-        captureBtn.hidden = false;
+        stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});
+        video.srcObject = stream; video.hidden = false; captureBtn.hidden = false;
         startCamBtn.textContent = 'Stop Camera';
-      } catch (err) {
-        alert('Could not start camera: ' + err.message);
-      }
+      } catch (err) { alert('Camera error: '+err.message); }
     });
-
-    // Capture & analyze from video
     captureBtn.addEventListener('click', () => {
-      const dataUri = toJpegDataURI(video);
-      analyzeRawBase64(stripDataUri(dataUri));
+      analyze(strip(toJpegDataURI(video)));
     });
-
-    function stopCamera() {
-      if (stream) {
-        stream.getTracks().forEach(t => t.stop());
-        stream = null;
-      }
-      video.hidden = true;
-      captureBtn.hidden = true;
-      startCamBtn.textContent = 'Start Camera';
+    function stopCam() {
+      if (stream) stream.getTracks().forEach(t=>t.stop());
+      stream=null; video.hidden=true; captureBtn.hidden=true;
+      startCamBtn.textContent='Start Camera';
     }
   </script>
 </body>

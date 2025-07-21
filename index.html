@@ -48,7 +48,8 @@
     }
 
     function imageToBase64(canvas) {
-      return canvas.toDataURL("image/jpeg", 0.9).split(',')[1];
+      // Keep the full base64 string with prefix
+      return canvas.toDataURL("image/jpeg", 0.9);
     }
 
     async function detectFromCanvas() {

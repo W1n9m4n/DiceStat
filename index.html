@@ -3,11 +3,27 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>DiceStat Video Detection</title>
+  <title>DiceStat Video Detection with Confidence Slider</title>
   <style>
-    body { font-family: Arial, sans-serif; margin: 20px; }
-    video { max-width: 100%; }
-    #confidenceValue { font-weight: bold; }
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+    }
+    input[type=range] {
+      width: 300px;
+      margin-top: 5px;
+    }
+    video {
+      max-width: 100%;
+      display: block;
+      margin-top: 20px;
+    }
+    canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      pointer-events: none;
+    }
   </style>
 </head>
 <body>
@@ -16,13 +32,12 @@
   <label for="confidenceSlider">Confidence Threshold: <span id="confidenceValue">0.75</span></label><br />
   <input type="range" id="confidenceSlider" min="0" max="1" step="0.01" value="0.75" />
 
-  <br /><br />
-  <video id="video" controls>
+  <video id="video" controls crossorigin="anonymous">
     <source src="your_video.mp4" type="video/mp4" />
     Your browser does not support the video tag.
   </video>
 
-  <canvas id="canvas" style="position:absolute; top:0; left:0;"></canvas>
+  <canvas id="canvas"></canvas>
 
   <script type="module">
     import Roboflow from "https://cdn.jsdelivr.net/npm/@roboflow/inference@1.2.3/dist/roboflow.mjs";
@@ -43,7 +58,6 @@
       confidenceValueDisplay.textContent = confidenceThreshold.toFixed(2);
     });
 
-    // Resize canvas to video size on metadata loaded
     video.addEventListener("loadedmetadata", () => {
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
@@ -60,13 +74,10 @@
         return;
       }
 
-      // Run inference on current video frame
       const predictions = await model.predict(video, { confidence: confidenceThreshold });
 
-      // Clear canvas
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      // Draw predictions that meet threshold
       predictions.forEach(prediction => {
         if (prediction.confidence >= confidenceThreshold) {
           const { x, y, width, height, class: cls, confidence } = prediction;
@@ -76,9 +87,7 @@
           ctx.font = "18px Arial";
           ctx.fillStyle = "red";
 
-          // Draw bounding box
           ctx.strokeRect(x, y, width, height);
-          // Draw label & confidence
           ctx.fillText(`${cls} ${(confidence * 100).toFixed(1)}%`, x, y > 20 ? y - 5 : y + 20);
         }
       });

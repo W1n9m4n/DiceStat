@@ -24,14 +24,15 @@
 
   <div id="stats"></div>
 
-  <script src="https://cdn.jsdelivr.net/npm/roboflow/dist/roboflow.js"></script>
-  <script>
+  <script type="module">
+    import { Roboflow } from "https://cdn.jsdelivr.net/npm/@roboflow/inference@1.1.0/dist/roboflow.mjs";
+
     const MODEL = 'dice-9uzag';
     const VERSION = '3';
-    const KEY = 'hcMpxDXEVyytWxlYcR00'; // <-- your inference key
+    const KEY = 'hcMpxDXEVyytWxlYcR00';
 
     const rf = new Roboflow({ apiKey: KEY });
-    const modelPromise = rf.load({ model: MODEL, version: VERSION });
+    const model = await rf.load({ model: MODEL, version: VERSION });
 
     const startCamBtn = document.getElementById('startCamBtn');
     const snapBtn = document.getElementById('snapBtn');
@@ -88,13 +89,12 @@
 
     async function runInference() {
       statsDiv.textContent = 'Detecting…';
-      const model = await modelPromise;
       const dataURL = canvas.toDataURL('image/jpeg');
       const preds = await model.predict(dataURL);
 
-      // draw bounding boxes
       ctx.lineWidth = 2;
       ctx.strokeStyle = 'lime';
+      ctx.font = "16px sans-serif";
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       preds.forEach(p => {
         const x1 = p.x - p.width/2;
@@ -104,7 +104,6 @@
         ctx.fillText(p.class + ' ' + (p.confidence*100).toFixed(0) + '%', x1, y1 - 4);
       });
 
-      // compute rolls
       const rolls = preds.map(p => Number(p.class));
       if (!rolls.length) {
         statsDiv.textContent = 'No dice detected.';

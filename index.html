@@ -1,100 +1,94 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>DiceStat</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DiceStat Video Detection</title>
   <style>
-    body { font-family: sans-serif; padding: 2em; }
-    video, canvas, img { max-width: 100%; }
-    #results { margin-top: 1em; }
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    video { max-width: 100%; }
+    #confidenceValue { font-weight: bold; }
   </style>
 </head>
 <body>
+  <h1>DiceStat Video Detection</h1>
 
-  <h1>DiceStat</h1>
+  <label for="confidenceSlider">Confidence Threshold: <span id="confidenceValue">0.75</span></label><br />
+  <input type="range" id="confidenceSlider" min="0" max="1" step="0.01" value="0.75" />
 
-  <p>Choose an image or use your webcam to detect dice using Roboflow:</p>
-  <input type="file" id="uploadInput" accept="image/*">
-  <button id="startCamera">Start Camera</button>
-  <button id="capture">Capture</button>
-  <video id="video" autoplay playsinline style="display:none;"></video>
-  <canvas id="canvas" style="display:none;"></canvas>
-  <img id="preview" src="" alt="Captured Image" />
-  <div id="results"></div>
+  <br /><br />
+  <video id="video" controls>
+    <source src="your_video.mp4" type="video/mp4" />
+    Your browser does not support the video tag.
+  </video>
 
-  <script>
-    const API_URL = "https://detect.roboflow.com/dice-9uzag/3";
-    const API_KEY = "hcMpxDXEVyytWxlYcR00";
+  <canvas id="canvas" style="position:absolute; top:0; left:0;"></canvas>
 
-    const uploadInput = document.getElementById("uploadInput");
+  <script type="module">
+    import Roboflow from "https://cdn.jsdelivr.net/npm/@roboflow/inference@1.2.3/dist/roboflow.mjs";
+
+    const rf = new Roboflow({ apiKey: "YOUR_API_KEY_HERE" });
+    const model = await rf.load("dice-statistics/3");
+
     const video = document.getElementById("video");
     const canvas = document.getElementById("canvas");
-    const preview = document.getElementById("preview");
-    const resultsDiv = document.getElementById("results");
+    const ctx = canvas.getContext("2d");
+    const slider = document.getElementById("confidenceSlider");
+    const confidenceValueDisplay = document.getElementById("confidenceValue");
 
-    document.getElementById("startCamera").onclick = async () => {
-      video.style.display = "block";
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-      video.srcObject = stream;
-    };
+    let confidenceThreshold = parseFloat(slider.value);
 
-    document.getElementById("capture").onclick = () => {
+    slider.addEventListener("input", () => {
+      confidenceThreshold = parseFloat(slider.value);
+      confidenceValueDisplay.textContent = confidenceThreshold.toFixed(2);
+    });
+
+    // Resize canvas to video size on metadata loaded
+    video.addEventListener("loadedmetadata", () => {
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
-      canvas.getContext("2d").drawImage(video, 0, 0);
-      const dataUrl = canvas.toDataURL("image/jpeg");
-      preview.src = dataUrl;
-      sendToRoboflow(dataUrl);
-    };
+      canvas.style.width = video.clientWidth + "px";
+      canvas.style.height = video.clientHeight + "px";
+      canvas.style.position = "absolute";
+      canvas.style.top = video.offsetTop + "px";
+      canvas.style.left = video.offsetLeft + "px";
+    });
 
-    uploadInput.onchange = () => {
-      const file = uploadInput.files[0];
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        preview.src = reader.result;
-        sendToRoboflow(reader.result);
-      };
-      reader.readAsDataURL(file);
-    };
-
-    function sendToRoboflow(dataUrl) {
-      const base64Data = dataUrl.replace(/^data:image\/\w+;base64,/, "");
-      fetch(`${API_URL}?api_key=${API_KEY}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: base64Data
-      })
-      .then(res => res.json())
-      .then(json => {
-        console.log(json);
-        displayResults(json);
-      })
-      .catch(err => {
-        console.error(err);
-        resultsDiv.innerHTML = "Error: " + err.message;
-      });
-    }
-
-    function displayResults(data) {
-      const predictions = data.predictions || [];
-      if (!predictions.length) {
-        resultsDiv.innerHTML = "<strong>No dice detected.</strong>";
+    async function detectFrame() {
+      if (video.paused || video.ended) {
+        requestAnimationFrame(detectFrame);
         return;
       }
 
-      let total = 0;
-      let rolls = predictions.map(p => {
-        const value = parseInt(p.class, 10);
-        total += value;
-        return value;
+      // Run inference on current video frame
+      const predictions = await model.predict(video, { confidence: confidenceThreshold });
+
+      // Clear canvas
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Draw predictions that meet threshold
+      predictions.forEach(prediction => {
+        if (prediction.confidence >= confidenceThreshold) {
+          const { x, y, width, height, class: cls, confidence } = prediction;
+
+          ctx.strokeStyle = "red";
+          ctx.lineWidth = 2;
+          ctx.font = "18px Arial";
+          ctx.fillStyle = "red";
+
+          // Draw bounding box
+          ctx.strokeRect(x, y, width, height);
+          // Draw label & confidence
+          ctx.fillText(`${cls} ${(confidence * 100).toFixed(1)}%`, x, y > 20 ? y - 5 : y + 20);
+        }
       });
 
-      resultsDiv.innerHTML = `
-        <strong>Dice detected:</strong> ${rolls.length}<br>
-        <strong>Total sum:</strong> ${total}<br>
-        <strong>Individual rolls:</strong> ${rolls.join(", ")}
-      `;
+      requestAnimationFrame(detectFrame);
     }
+
+    video.addEventListener("play", () => {
+      detectFrame();
+    });
   </script>
 </body>
 </html>

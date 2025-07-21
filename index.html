@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>DiceStat Video & Image Inference</title>
+  <title>DiceStat Detector</title>
   <style>
     #output {
       position: relative;
@@ -47,20 +47,14 @@
   <div id="output"></div>
 
   <script type="module">
-    // Your hosted Roboflow model credentials
     const apiKey = "hcMpxDXEVyytWxlYcR00";
     const modelId = "dice-9uzag";
     const version = 3;
 
     import Roboflow from "https://cdn.jsdelivr.net/npm/@roboflow/inference@1.2.3/dist/roboflow.mjs";
 
-    // Initialize Roboflow client with your API key
     const rf = new Roboflow({ apiKey });
-    const model = await rf
-      .workspace("your-workspace") // optional: specify your workspace slug if needed
-      .project(modelId)
-      .version(version)
-      .model();
+    const model = await rf.project(modelId).version(version).model();
 
     const confidenceSlider = document.getElementById("confidenceSlider");
     const confidenceValueDisplay = document.getElementById("confidenceValue");
@@ -95,7 +89,7 @@
       });
     }
 
-    // Image upload handling
+    // Image upload
     document.getElementById("imageUpload").addEventListener("change", async (e) => {
       clearOutput();
 
@@ -126,7 +120,7 @@
       };
     });
 
-    // Video upload handling
+    // Video upload
     document.getElementById("videoUpload").addEventListener("change", async (e) => {
       clearOutput();
 

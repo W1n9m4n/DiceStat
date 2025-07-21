@@ -1,107 +1,99 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>DiceStat - Dice Detection</title>
+  <meta charset="UTF-8">
+  <title>DiceStat</title>
   <style>
-    body {
-      font-family: sans-serif;
-      text-align: center;
-      padding: 2rem;
-    }
-    input[type="file"] {
-      margin: 1rem 0;
-    }
-    img {
-      max-width: 100%;
-      margin-top: 1rem;
-    }
-    #results {
-      margin-top: 1rem;
-      font-size: 1.2rem;
-    }
+    body { font-family: sans-serif; padding: 2em; }
+    video, canvas, img { max-width: 100%; }
+    #results { margin-top: 1em; }
   </style>
 </head>
 <body>
-  <h1>🎲 DiceStat</h1>
-  <p>Upload a dice image to detect and calculate the total</p>
 
-  <input type="file" id="imageInput" accept="image/*" />
-  <div id="preview"></div>
+  <h1>DiceStat</h1>
+
+  <p>Choose an image or use your webcam to detect dice using Roboflow:</p>
+  <input type="file" id="uploadInput" accept="image/*">
+  <button id="startCamera">Start Camera</button>
+  <button id="capture">Capture</button>
+  <video id="video" autoplay playsinline style="display:none;"></video>
+  <canvas id="canvas" style="display:none;"></canvas>
+  <img id="preview" src="" alt="Captured Image" />
   <div id="results"></div>
 
   <script>
-    const imageInput = document.getElementById("imageInput");
+    const API_URL = "https://detect.roboflow.com/dice-9uzag/3";
+    const API_KEY = "hcMpxDXEVyytWxlYcR00";
+
+    const uploadInput = document.getElementById("uploadInput");
+    const video = document.getElementById("video");
+    const canvas = document.getElementById("canvas");
     const preview = document.getElementById("preview");
-    const results = document.getElementById("results");
+    const resultsDiv = document.getElementById("results");
 
-    imageInput.addEventListener("change", async function () {
-      const file = this.files[0];
-      if (!file) return;
+    document.getElementById("startCamera").onclick = async () => {
+      video.style.display = "block";
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      video.srcObject = stream;
+    };
 
-      // Show image preview
+    document.getElementById("capture").onclick = () => {
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      canvas.getContext("2d").drawImage(video, 0, 0);
+      const dataUrl = canvas.toDataURL("image/jpeg");
+      preview.src = dataUrl;
+      sendToRoboflow(dataUrl);
+    };
+
+    uploadInput.onchange = () => {
+      const file = uploadInput.files[0];
       const reader = new FileReader();
-      reader.onload = function (e) {
-        preview.innerHTML = `<img src="${e.target.result}" alt="Uploaded image"/>`;
+      reader.onloadend = () => {
+        preview.src = reader.result;
+        sendToRoboflow(reader.result);
       };
       reader.readAsDataURL(file);
+    };
 
-      // Convert to base64
-      const base64 = await toBase64(file);
-
-      // Send to Roboflow Hosted API
-      const apiKey = "hcMpxDXEVyytWxlYcR00";
-      const model = "dice-9uzag";
-      const version = 3;
-
-      results.innerText = "Detecting...";
-
-      try {
-        const response = await fetch(
-          `https://detect.roboflow.com/${model}/${version}?api_key=${apiKey}`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/x-www-form-urlencoded",
-            },
-            body: base64.split(",")[1],
-          }
-        );
-
-        const data = await response.json();
-
-        if (data && data.predictions) {
-          const predictions = data.predictions;
-          if (predictions.length === 0) {
-            results.innerHTML = "No dice detected.";
-            return;
-          }
-
-          const values = predictions.map(p => parseInt(p.class)).filter(n => !isNaN(n));
-          const total = values.reduce((sum, val) => sum + val, 0);
-
-          results.innerHTML = `
-            Dice detected: ${values.length} <br/>
-            Individual rolls: ${values.join(", ")} <br/>
-            Total sum: ${total}
-          `;
-        } else {
-          results.innerHTML = "Unexpected API response.";
-        }
-      } catch (err) {
+    function sendToRoboflow(dataUrl) {
+      const base64Data = dataUrl.replace(/^data:image\/\w+;base64,/, "");
+      fetch(`${API_URL}?api_key=${API_KEY}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: base64Data
+      })
+      .then(res => res.json())
+      .then(json => {
+        console.log(json);
+        displayResults(json);
+      })
+      .catch(err => {
         console.error(err);
-        results.innerHTML = "Error: Could not process the image.";
-      }
-    });
-
-    function toBase64(file) {
-      return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.readAsDataURL(file);
-        reader.onload = () => resolve(reader.result);
-        reader.onerror = error => reject(error);
+        resultsDiv.innerHTML = "Error: " + err.message;
       });
+    }
+
+    function displayResults(data) {
+      const predictions = data.predictions || [];
+      if (!predictions.length) {
+        resultsDiv.innerHTML = "<strong>No dice detected.</strong>";
+        return;
+      }
+
+      let total = 0;
+      let rolls = predictions.map(p => {
+        const value = parseInt(p.class, 10);
+        total += value;
+        return value;
+      });
+
+      resultsDiv.innerHTML = `
+        <strong>Dice detected:</strong> ${rolls.length}<br>
+        <strong>Total sum:</strong> ${total}<br>
+        <strong>Individual rolls:</strong> ${rolls.join(", ")}
+      `;
     }
   </script>
 </body>

@@ -3,70 +3,59 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Dice Pip Detector (iPhone Friendly)</title>
+  <title>Dice Pip Detector - Single Capture</title>
   <style>
     body { font-family: Arial, sans-serif; margin: 20px; }
-    video, canvas { border: 1px solid black; max-width: 100%; height: auto; }
-    #history { margin-top: 20px; }
-    table { border-collapse: collapse; width: 100%; }
-    td, th { border: 1px solid #ccc; padding: 5px 10px; text-align: center; }
+    video, canvas { border: 1px solid black; max-width: 100%; height: auto; display: block; margin-bottom: 10px; }
+    #summary { margin-top: 20px; font-size: 1.2rem; }
     button { font-size: 1.2rem; padding: 10px 20px; margin-bottom: 10px; }
   </style>
 </head>
 <body>
   <h1>Dice Pip Detector</h1>
-  <button id="startBtn">Start Camera</button><br />
+  <button id="startBtn">Start Camera</button>
+  <button id="captureBtn" disabled>Capture & Analyze</button>
+
   <video id="video" width="640" height="480" autoplay muted playsinline></video>
-  <canvas id="canvas" width="640" height="480" style="border: 1px solid red;"></canvas>
+  <canvas id="canvas" width="640" height="480"></canvas>
 
-  <h2>Current Dice Count</h2>
-  <div id="currentCount">Press "Start Camera" to begin</div>
-
-  <h2>History</h2>
-  <table id="history">
-    <thead><tr><th>Timestamp</th><th>Pip Value</th><th>Count</th></tr></thead>
-    <tbody></tbody>
-  </table>
+  <div id="summary">Press "Start Camera" and then "Capture & Analyze"</div>
 
   <script>
     const video = document.getElementById("video");
     const canvas = document.getElementById("canvas");
     const ctx = canvas.getContext("2d");
-    const currentCountDiv = document.getElementById("currentCount");
-    const historyTableBody = document.querySelector("#history tbody");
     const startBtn = document.getElementById("startBtn");
+    const captureBtn = document.getElementById("captureBtn");
+    const summaryDiv = document.getElementById("summary");
+
+    const API_URL = "https://detect.roboflow.com/dice-9uzag/3?api_key=hcMpxDXEVyytWxlYcR00";
 
     async function startCamera() {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
         video.srcObject = stream;
         await video.play();
-        detectLoop();
+        captureBtn.disabled = false;
+        summaryDiv.textContent = "Camera started. Click 'Capture & Analyze' to detect dice.";
       } catch (err) {
-        currentCountDiv.textContent = `Camera access error: ${err.message}`;
+        summaryDiv.textContent = `Camera access error: ${err.message}`;
       }
     }
 
-    function imageToBase64(canvas) {
-      return canvas.toDataURL("image/png"); // changed from jpeg to png
+    function getBase64FromCanvas(canvas) {
+      // Get base64 with prefix "data:image/jpeg;base64,..."
+      return canvas.toDataURL("image/jpeg", 0.9);
     }
 
-    async function detectFromCanvas() {
-      const base64Image = imageToBase64(canvas);
-      console.log("Base64 image size:", base64Image.length); // debug
-
-      const response = await fetch(
-        "https://detect.roboflow.com/dice-9uzag/3?api_key=hcMpxDXEVyytWxlYcR00",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            image: base64Image
-          })
-        }
-      );
+    async function detectDice(base64Image) {
+      const response = await fetch(API_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ image: base64Image })
+      });
 
       if (!response.ok) {
         const errorText = await response.text();
@@ -76,57 +65,77 @@
       return response.json();
     }
 
-    async function detectLoop() {
+    function drawBoundingBoxes(predictions) {
+      predictions.forEach(pred => {
+        const { x, y, width, height, class: label, confidence } = pred;
+        // The API returns relative coords (0-1) - convert to canvas size
+        const canvasX = x * canvas.width;
+        const canvasY = y * canvas.height;
+        const canvasW = width * canvas.width;
+        const canvasH = height * canvas.height;
+
+        // Draw rectangle
+        ctx.strokeStyle = "lime";
+        ctx.lineWidth = 3;
+        ctx.strokeRect(canvasX - canvasW / 2, canvasY - canvasH / 2, canvasW, canvasH);
+
+        // Draw label background
+        ctx.fillStyle = "lime";
+        ctx.font = "18px Arial";
+        const text = `${label} (${(confidence * 100).toFixed(1)}%)`;
+        const textWidth = ctx.measureText(text).width;
+        const padding = 4;
+        ctx.fillRect(canvasX - canvasW / 2, canvasY - canvasH / 2 - 24, textWidth + padding * 2, 22);
+
+        // Draw label text
+        ctx.fillStyle = "black";
+        ctx.fillText(text, canvasX - canvasW / 2 + padding, canvasY - canvasH / 2 - 6);
+      });
+    }
+
+    async function captureAndAnalyze() {
       try {
-        if (video.readyState < 2) {
-          setTimeout(detectLoop, 500);
+        // Draw current video frame to canvas
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+        const base64Image = getBase64FromCanvas(canvas);
+
+        summaryDiv.textContent = "Analyzing...";
+
+        const data = await detectDice(base64Image);
+
+        // Clear previous overlays by redrawing video frame first
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+        if (!data.predictions || data.predictions.length === 0) {
+          summaryDiv.textContent = "No dice detected.";
           return;
         }
 
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        // Draw bounding boxes and labels
+        drawBoundingBoxes(data.predictions);
 
-        const data = await detectFromCanvas();
+        // Summarize counts per pip
         const counts = {};
+        data.predictions.forEach(pred => {
+          const label = pred.class;
+          counts[label] = (counts[label] || 0) + 1;
+        });
 
-        if (data.predictions) {
-          data.predictions.forEach(pred => {
-            const label = pred.class;
-            counts[label] = (counts[label] || 0) + 1;
-          });
+        let summaryText = "Detected dice:\n";
+        for (const [pip, count] of Object.entries(counts)) {
+          summaryText += ` - ${count} dice with ${pip} pip${pip !== "1" ? "s" : ""}\n`;
         }
 
-        currentCountDiv.innerHTML = '';
-        const timestamp = new Date().toLocaleTimeString();
-
-        if (Object.keys(counts).length === 0) {
-          currentCountDiv.textContent = "No dice detected";
-        } else {
-          for (const [pip, count] of Object.entries(counts)) {
-            const p = document.createElement("p");
-            p.textContent = `${count} dice with ${pip} pip${pip !== "1" ? 's' : ''}`;
-            currentCountDiv.appendChild(p);
-
-            const row = document.createElement("tr");
-            row.innerHTML = `<td>${timestamp}</td><td>${pip}</td><td>${count}</td>`;
-            historyTableBody.prepend(row);
-          }
-
-          while (historyTableBody.rows.length > 20) {
-            historyTableBody.deleteRow(historyTableBody.rows.length - 1);
-          }
-        }
+        summaryDiv.textContent = summaryText;
       } catch (err) {
-        console.error("Error in detectLoop:", err);
-        currentCountDiv.textContent = `Detection error: ${err.message}`;
-      } finally {
-        setTimeout(detectLoop, 2000);
+        summaryDiv.textContent = `Error: ${err.message}`;
       }
     }
 
-    startBtn.addEventListener("click", () => {
-      startBtn.disabled = true;
-      startCamera();
-    });
+    startBtn.addEventListener("click", startCamera);
+    captureBtn.addEventListener("click", captureAndAnalyze);
   </script>
 </body>
 </html>

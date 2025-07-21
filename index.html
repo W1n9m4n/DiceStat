@@ -1,147 +1,111 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Roboflow Video Inference Demo</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <title>DiceStat Face Demo</title>
   <style>
-    body { font-family: Arial, sans-serif; margin: 2rem; }
-    input, button { font-size: 1rem; padding: 0.5rem; }
-    #status { margin-top: 1rem; white-space: pre-wrap; }
+    body { font-family: sans-serif; text-align: center; margin: 1rem; }
+    video, canvas { max-width: 100%; margin-top: 1rem; }
+    #controls button { margin: 0.5rem; }
+    #stats { margin-top: 1rem; }
   </style>
 </head>
 <body>
-  <h1>Roboflow Video Inference Demo</h1>
+  <h1>🎲 DiceStat Demo</h1>
 
-  <input type="file" id="videoInput" accept="video/mp4,video/avi,video/mkv,video/webm" />
-  <br /><br />
-  <button id="startBtn" disabled>Start Video Inference</button>
+  <div id="controls">
+    <button id="startBtn">Start Camera</button>
+    <button id="snapBtn" disabled>Snap Photo</button>
+    <input type="file" id="upload" accept="image/*">
+  </div>
 
-  <pre id="status"></pre>
+  <video id="video" autoplay playsinline hidden></video>
+  <canvas id="canvas" hidden></canvas>
+  <div id="stats"></div>
 
+  <script src="https://cdn.jsdelivr.net/npm/roboflow/dist/roboflow.js"></script>
   <script>
-    const API_KEY = "YOUR_WORKSPACE_API_KEY";  // <<-- PUT YOUR API KEY HERE
-    const MODEL_ID = "your_model_id";           // <<-- Your model slug here
-    const MODEL_VERSION = "1";                   // <<-- Model version
+    const MODEL = 'dice-9uzag';
+    const VERSION = '3';
+    const KEY = 'hcMpxDXEVyytWxlYcR00'; // your inference key
 
-    const videoInput = document.getElementById("videoInput");
-    const startBtn = document.getElementById("startBtn");
-    const statusEl = document.getElementById("status");
+    const rf = new Roboflow({ apiKey: KEY });
+    const model = rf.load({ model: MODEL, version: VERSION });
 
-    let selectedFile;
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const startBtn = document.getElementById('startBtn');
+    const snapBtn = document.getElementById('snapBtn');
+    const upload = document.getElementById('upload');
+    const stats = document.getElementById('stats');
 
-    videoInput.addEventListener("change", () => {
-      if (videoInput.files.length > 0) {
-        selectedFile = videoInput.files[0];
-        startBtn.disabled = false;
-        statusEl.textContent = "";
+    let stream;
+
+    startBtn.onclick = async () => {
+      if (!stream) {
+        stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        video.srcObject = stream;
+        video.hidden = false;
+        snapBtn.disabled = false;
+        startBtn.textContent = 'Stop Camera';
       } else {
-        selectedFile = null;
-        startBtn.disabled = true;
+        stream.getTracks().forEach(t => t.stop());
+        stream = null;
+        video.hidden = true;
+        snapBtn.disabled = true;
+        startBtn.textContent = 'Start Camera';
       }
-    });
+    };
 
-    startBtn.addEventListener("click", async () => {
-      if (!selectedFile) return alert("Please select a video file.");
+    snapBtn.onclick = () => {
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      ctx.drawImage(video, 0, 0);
+      runInference();
+    };
 
-      startBtn.disabled = true;
-      statusEl.textContent = "Requesting upload signed URL...";
+    upload.onchange = () => {
+      const file = upload.files[0];
+      const img = new Image();
+      img.onload = () => {
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        ctx.drawImage(img, 0, 0);
+        runInference();
+      };
+      img.src = URL.createObjectURL(file);
+    };
 
-      try {
-        // Step 1: Get signed upload URL
-        const res1 = await fetch(`https://api.roboflow.com/video_upload_signed_url/?api_key=${API_KEY}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ file_name: selectedFile.name }),
-        });
-        const data1 = await res1.json();
-        const signedUrl = data1.signed_url;
-        if (!signedUrl) throw new Error("Failed to get signed URL");
+    async function runInference() {
+      stats.innerText = 'Detecting…';
+      const imgData = canvas.toDataURL('image/jpeg');
+      const predictions = await (await model).predict(imgData);
+      drawBoxes(predictions);
+      updateStats(predictions);
+    }
 
-        statusEl.textContent = "Uploading video to Roboflow...";
-        
-        // Step 2: Upload video file to signed URL
-        await fetch(signedUrl, {
-          method: "PUT",
-          headers: { "Content-Type": "application/octet-stream" },
-          body: selectedFile,
-        });
-        statusEl.textContent = "Video uploaded successfully.";
+    function drawBoxes(preds) {
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = 'lime';
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      preds.forEach(p => {
+        const [x, y, w, h] = [p.x, p.y, p.width, p.height];
+        ctx.strokeRect(x - w/2, y - h/2, w, h);
+        ctx.fillText(p.class + ` (${(p.confidence*100).toFixed(1)}%)`, x - w/2, y - h/2 - 4);
+      });
+      canvas.hidden = false;
+    }
 
-        // Extract public video URL (remove query params)
-        const publicVideoUrl = signedUrl.split("?")[0];
-
-        statusEl.textContent += "\nScheduling video inference job...";
-
-        // Step 3: Schedule inference job
-        const jobBody = {
-          input_url: publicVideoUrl,
-          infer_fps: 5,
-          models: [
-            {
-              model_id: MODEL_ID,
-              model_version: MODEL_VERSION,
-              inference_type: "object-detection",
-              inference_params: { confidence: 0.4 },
-            },
-          ],
-        };
-
-        const res2 = await fetch(`https://api.roboflow.com/videoinfer/?api_key=${API_KEY}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(jobBody),
-        });
-
-        const data2 = await res2.json();
-        if (!data2.job_id) throw new Error("Failed to schedule job");
-
-        statusEl.textContent += `\nJob scheduled. Job ID: ${data2.job_id}`;
-        statusEl.textContent += "\nPolling for job completion every 60 seconds...";
-
-        // Step 4: Poll for job status
-        await pollJobStatus(data2.job_id);
-      } catch (error) {
-        statusEl.textContent += `\nError: ${error.message}`;
-      }
-      startBtn.disabled = false;
-    });
-
-    async function pollJobStatus(jobId) {
-      let status = 1;
-      let retries = 0;
-      const maxRetries = 20;
-
-      while (status === 1 && retries < maxRetries) {
-        statusEl.textContent += `\nChecking job status... (attempt ${retries + 1})`;
-        try {
-          const res = await fetch(`https://api.roboflow.com/videoinfer/?api_key=${API_KEY}&job_id=${jobId}`);
-          const data = await res.json();
-          status = data.status;
-
-          if (status === 0) {
-            statusEl.textContent += "\n✅ Job complete!";
-            statusEl.textContent += `\nDownload results: ${data.output_signed_url}`;
-            // Optionally, you can fetch and parse the JSON here if CORS allows.
-            return;
-          } else if (status > 1) {
-            statusEl.textContent += "\n❌ Job failed.";
-            return;
-          } else {
-            statusEl.textContent += "\n⏳ Still processing...";
-          }
-        } catch (err) {
-          statusEl.textContent += `\nPolling error: ${err.message}`;
-        }
-
-        retries++;
-        if (status !== 0) {
-          await new Promise((r) => setTimeout(r, 60000)); // wait 60 sec before next poll
-        }
-      }
-      if (retries >= maxRetries) {
-        statusEl.textContent += "\nPolling timed out.";
-      }
+    function updateStats(preds) {
+      if (!preds.length) return stats.textContent = 'No dice detected.';
+      const rolls = preds.map(p => Number(p.class));
+      stats.innerHTML = `
+        Dice: ${rolls.length}<br>
+        Sum: ${rolls.reduce((a,b)=>a+b,0)}<br>
+        Rolls: ${rolls.join(', ')}
+      `;
     }
   </script>
 </body>

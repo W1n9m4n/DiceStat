@@ -10,6 +10,7 @@
     input, button { font-size: 1em; margin: 0.5em 0; width: 100%; }
     video, canvas { max-width: 100%; margin-top: 0.5em; }
     #results ul { padding-left: 1.2em; }
+    pre { background: #f4f4f4; padding: 0.5em; overflow-x: auto; }
   </style>
 </head>
 <body>
@@ -44,19 +45,19 @@
   <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
   <script>
     document.addEventListener('DOMContentLoaded', () => {
-      const API_URL        = 'https://serverless.roboflow.com/dice-9uzag/3';
-      const API_KEY        = 'hcMpxDXEVyytWxlYcR00';  // replace with your inference key
+      const API_KEY = 'hcMpxDXEVyytWxlYcR00'; // ← replace with your inference key
+      const BASE_URL = 'https://detect.roboflow.com/dice-9uzag/3';
 
-      const urlInput       = document.getElementById('urlInput');
-      const urlAnalyzeBtn  = document.getElementById('urlAnalyzeBtn');
-      const fileInput      = document.getElementById('fileInput');
-      const startCamBtn    = document.getElementById('startCamBtn');
-      const video          = document.getElementById('video');
-      const captureBtn     = document.getElementById('captureBtn');
-      const resultsDiv     = document.getElementById('results');
+      const urlInput      = document.getElementById('urlInput');
+      const urlAnalyzeBtn = document.getElementById('urlAnalyzeBtn');
+      const fileInput     = document.getElementById('fileInput');
+      const startCamBtn   = document.getElementById('startCamBtn');
+      const video         = document.getElementById('video');
+      const captureBtn    = document.getElementById('captureBtn');
+      const resultsDiv    = document.getElementById('results');
       let stream = null;
 
-      // Utility: draw element into canvas → JPEG Data‑URI
+      // Draw <img> or <video> into canvas → JPEG Data‑URI
       function toJpegDataURI(el) {
         const w = el.videoWidth || el.naturalWidth;
         const h = el.videoHeight || el.naturalHeight;
@@ -65,14 +66,16 @@
         c.getContext('2d').drawImage(el, 0, 0, w, h);
         return c.toDataURL('image/jpeg');
       }
-      function strip(dataUri) { return dataUri.split(',')[1]; }
+      // Strip off "data:image/jpeg;base64," → raw Base64
+      function strip(dataUri) {
+        return dataUri.split(',')[1];
+      }
 
-      // Display results or fallback
       function showResults(data) {
         const preds = Array.isArray(data.predictions) ? data.predictions : [];
-        if (!preds.length) {
+        if (preds.length === 0) {
           resultsDiv.innerHTML = `
-            <p>No dice detected.</p>
+            <h2>No dice detected</h2>
             <pre>${JSON.stringify(data, null, 2)}</pre>
           `;
           return;
@@ -96,16 +99,16 @@
         resultsDiv.innerHTML = `<p style="color:red;">Error: ${msg}</p>`;
       }
 
-      // 1) URL Mode
+      // --- 1) URL Mode ---
       urlAnalyzeBtn.addEventListener('click', async () => {
         const imageUrl = urlInput.value.trim();
         if (!imageUrl) return alert('Please enter an image URL');
         resultsDiv.innerHTML = '<p>Analyzing via URL…</p>';
         try {
           const resp = await axios.post(
-            API_URL,
+            `${BASE_URL}?api_key=${API_KEY}&image=${encodeURIComponent(imageUrl)}`,
             null,
-            { params: { api_key: API_KEY, image: imageUrl } }
+            { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
           );
           showResults(resp.data);
         } catch (err) {
@@ -113,7 +116,7 @@
         }
       });
 
-      // 2) UPLOAD Mode
+      // --- 2) UPLOAD Mode ---
       fileInput.addEventListener('change', e => {
         stopCamera();
         const file = e.target.files[0];
@@ -127,7 +130,7 @@
         reader.readAsDataURL(file);
       });
 
-      // 3) CAMERA Mode
+      // --- 3) CAMERA Mode ---
       startCamBtn.addEventListener('click', async () => {
         if (stream) { stopCamera(); return; }
         try {
@@ -137,7 +140,7 @@
           captureBtn.hidden = false;
           startCamBtn.textContent = '🛑 Stop Camera';
         } catch (err) {
-          alert('Camera error: ' + err.message);
+          alert('Could not start camera: ' + err.message);
         }
       });
       captureBtn.addEventListener('click', () => analyzeCanvas(video));
@@ -150,16 +153,15 @@
         startCamBtn.textContent = '📷 Start Camera';
       }
 
-      // Shared: rasterize → strip → POST raw base64
+      // Shared: rasterize → strip → POST raw Base64
       function analyzeCanvas(el) {
         resultsDiv.innerHTML = '<p>Analyzing…</p>';
-        const dataUri = toJpegDataURI(el);
-        const rawB64  = strip(dataUri);
-
-        axios.post(API_URL, rawB64, {
-          params: { api_key: API_KEY },
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
-        })
+        const rawB64 = strip(toJpegDataURI(el));
+        axios.post(
+          `${BASE_URL}?api_key=${API_KEY}`,
+          rawB64,
+          { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+        )
         .then(resp => showResults(resp.data))
         .catch(showError);
       }

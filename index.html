@@ -38,7 +38,7 @@
 <div id="results"></div>
 
 <script>
-  const API_URL = "https://detect.roboflow.com/dice-9uzag/3";
+  const API_URL = "https://serverless.roboflow.com/custom-workflow-object-detection-cwypj/1";
   const API_KEY = "hcMpxDXEVyytWxlYcR00";
 
   const modeRadios = document.querySelectorAll('input[name="mode"]');
@@ -55,7 +55,7 @@
   let videoStream = null;
   let intervalId = null;
 
-  // Mode toggle
+  // Toggle modes
   modeRadios.forEach(radio => {
     radio.addEventListener("change", () => {
       if (radio.value === "upload" && radio.checked) {
@@ -72,12 +72,12 @@
     });
   });
 
-  // Confidence slider update
+  // Confidence threshold update
   confidenceSlider.addEventListener("input", () => {
     confidenceValue.textContent = confidenceSlider.value;
   });
 
-  // Upload image handler
+  // Handle image upload
   uploadInput.addEventListener("change", () => {
     if (!uploadInput.files[0]) return;
     const reader = new FileReader();
@@ -88,25 +88,20 @@
     reader.readAsDataURL(uploadInput.files[0]);
   });
 
-  // Start webcam
+  // Start video
   async function startVideoStream() {
     try {
       videoStream = await navigator.mediaDevices.getUserMedia({ video: true });
       video.srcObject = videoStream;
       video.play();
-
-      // Capture every 10 seconds
-      intervalId = setInterval(captureFrameFromVideo, 10000);
+      intervalId = setInterval(captureFrameFromVideo, 10000); // every 10 seconds
     } catch (err) {
       resultsDiv.textContent = "Error accessing webcam: " + err.message;
     }
   }
 
   function stopVideoStream() {
-    if (intervalId) {
-      clearInterval(intervalId);
-      intervalId = null;
-    }
+    if (intervalId) clearInterval(intervalId);
     if (videoStream) {
       videoStream.getTracks().forEach(track => track.stop());
       videoStream = null;
@@ -114,7 +109,6 @@
     preview.src = "";
   }
 
-  // Capture frame from video and send to Roboflow
   function captureFrameFromVideo() {
     if (!video.videoWidth || !video.videoHeight) return;
     canvas.width = video.videoWidth;
@@ -126,34 +120,28 @@
     sendToRoboflow(dataUrl, parseFloat(confidenceSlider.value));
   }
 
-  // Clear results display
   function clearResults() {
     resultsDiv.textContent = "";
     preview.src = "";
   }
 
-  // Send base64 image to Roboflow Hosted API
   function sendToRoboflow(dataUrl, confidence) {
     resultsDiv.textContent = "Detecting...";
     const base64Data = dataUrl.replace(/^data:image\/\w+;base64,/, "");
 
-    fetch(`${API_URL}?api_key=${API_KEY}&confidence=${confidence}`, {
+    fetch(`${API_URL}?api_key=${API_KEY}`, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: base64Data
     })
-      .then(res => res.json())
-      .then(json => {
-        displayResults(json, confidence);
-      })
-      .catch(err => {
-        resultsDiv.textContent = "Error: " + err.message;
-      });
+    .then(res => res.json())
+    .then(json => displayResults(json, confidence))
+    .catch(err => resultsDiv.textContent = "Error: " + err.message);
   }
 
-  // Display detection results
   function displayResults(data, confidence) {
-    const predictions = data.predictions || [];
+    const predictions = (data.predictions || []).filter(p => p.confidence >= confidence);
+
     if (!predictions.length) {
       resultsDiv.innerHTML = `<strong>No dice detected (threshold: ${confidence})</strong>`;
       return;

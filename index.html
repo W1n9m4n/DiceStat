@@ -1,167 +1,186 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<title>DiceStat Video + Image Detection</title>
-<style>
-  body { font-family: sans-serif; padding: 2em; max-width: 600px; margin: auto; }
-  video, canvas, img { max-width: 100%; margin-top: 1em; }
-  #results { margin-top: 1em; font-weight: bold; }
-  label { display: block; margin-top: 1em; }
-  #confidenceValue { font-weight: normal; }
-</style>
+  <meta charset="UTF-8" />
+  <title>DiceStat Workflow with Bounding Boxes</title>
+  <style>
+    body { font-family: sans-serif; padding:2em; max-width:600px; margin:auto; }
+    video, canvas, img { max-width:100%; margin-top:1em; }
+    #results { margin-top:1em; font-weight:bold; }
+    label { display:block; margin-top:1em; }
+    #confidenceValue { font-weight:normal; }
+  </style>
 </head>
 <body>
+  <h1>DiceStat – Workflow Mode</h1>
+  <p>Select mode:</p>
+  <label><input type="radio" name="mode" value="upload" checked> Upload Image</label>
+  <label><input type="radio" name="mode" value="video"> Webcam Video</label>
 
-<h1>DiceStat</h1>
+  <div id="uploadSection">
+    <input type="file" id="uploadInput" accept="image/*" />
+  </div>
 
-<p>Select mode:</p>
-<label><input type="radio" name="mode" value="upload" checked> Upload Image</label>
-<label><input type="radio" name="mode" value="video"> Use Webcam Video</label>
+  <div id="videoSection" style="display:none;">
+    <video id="video" autoplay playsinline></video>
+  </div>
 
-<div id="uploadSection">
-  <input type="file" id="uploadInput" accept="image/*" />
-</div>
+  <canvas id="canvas" style="display:none;"></canvas>
+  <img id="preview" alt="Preview Image" />
 
-<div id="videoSection" style="display:none;">
-  <video id="video" autoplay playsinline></video>
-</div>
+  <label>
+    Confidence threshold: <span id="confidenceValue">0.25</span>
+    <input type="range" id="confidenceSlider" min="0" max="1" step="0.01" value="0.25" />
+  </label>
 
-<canvas id="canvas" style="display:none;"></canvas>
-<img id="preview" alt="Preview Image" />
+  <div id="results"></div>
 
-<label>
-  Confidence threshold: <span id="confidenceValue">0.25</span>
-  <input type="range" id="confidenceSlider" min="0" max="1" step="0.01" value="0.25" />
-</label>
+  <script>
+    const WORKSPACE = "dicestat-d6";
+    const WORKFLOW_ID = "dicecounter-v01";
+    const API_URL = `https://serverless.roboflow.com/${WORKSPACE}/workflows/${WORKFLOW_ID}`;
+    const API_KEY = "hcMpxDXEVyytWxlYcR00";
 
-<div id="results"></div>
+    const modeRadios = document.querySelectorAll('input[name="mode"]');
+    const uploadSection = document.getElementById("uploadSection");
+    const videoSection = document.getElementById("videoSection");
+    const uploadInput = document.getElementById("uploadInput");
+    const video = document.getElementById("video");
+    const canvas = document.getElementById("canvas");
+    const preview = document.getElementById("preview");
+    const resultsDiv = document.getElementById("results");
+    const confidenceSlider = document.getElementById("confidenceSlider");
+    const confidenceValue = document.getElementById("confidenceValue");
 
-<script>
-  const API_URL = "https://serverless.roboflow.com/custom-workflow-object-detection-cwypj/1";
-  const API_KEY = "hcMpxDXEVyytWxlYcR00";
+    let videoStream = null, intervalId = null;
 
-  const modeRadios = document.querySelectorAll('input[name="mode"]');
-  const uploadSection = document.getElementById("uploadSection");
-  const videoSection = document.getElementById("videoSection");
-  const uploadInput = document.getElementById("uploadInput");
-  const video = document.getElementById("video");
-  const canvas = document.getElementById("canvas");
-  const preview = document.getElementById("preview");
-  const resultsDiv = document.getElementById("results");
-  const confidenceSlider = document.getElementById("confidenceSlider");
-  const confidenceValue = document.getElementById("confidenceValue");
-
-  let videoStream = null;
-  let intervalId = null;
-
-  // Toggle modes
-  modeRadios.forEach(radio => {
-    radio.addEventListener("change", () => {
-      if (radio.value === "upload" && radio.checked) {
-        stopVideoStream();
-        uploadSection.style.display = "block";
-        videoSection.style.display = "none";
-        clearResults();
-      } else if (radio.value === "video" && radio.checked) {
-        uploadSection.style.display = "none";
-        videoSection.style.display = "block";
-        startVideoStream();
-        clearResults();
-      }
+    modeRadios.forEach(radio => {
+      radio.addEventListener("change", () => {
+        if (radio.checked) {
+          if (radio.value === "upload") {
+            stopVideo();
+            show(uploadSection);
+            hide(videoSection);
+            clearCanvas();
+          } else {
+            hide(uploadSection);
+            show(videoSection);
+            startVideo();
+          }
+        }
+      });
     });
-  });
 
-  // Confidence threshold update
-  confidenceSlider.addEventListener("input", () => {
-    confidenceValue.textContent = confidenceSlider.value;
-  });
+    confidenceSlider.addEventListener("input", () => {
+      confidenceValue.textContent = confidenceSlider.value;
+    });
 
-  // Handle image upload
-  uploadInput.addEventListener("change", () => {
-    if (!uploadInput.files[0]) return;
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      preview.src = reader.result;
-      sendToRoboflow(reader.result, parseFloat(confidenceSlider.value));
+    uploadInput.onchange = () => {
+      const file = uploadInput.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        preview.src = reader.result;
+        drawOnCanvas(reader.result, () => invokeWorkflow(reader.result));
+      };
+      reader.readAsDataURL(file);
     };
-    reader.readAsDataURL(uploadInput.files[0]);
-  });
 
-  // Start video
-  async function startVideoStream() {
-    try {
-      videoStream = await navigator.mediaDevices.getUserMedia({ video: true });
-      video.srcObject = videoStream;
-      video.play();
-      intervalId = setInterval(captureFrameFromVideo, 10000); // every 10 seconds
-    } catch (err) {
-      resultsDiv.textContent = "Error accessing webcam: " + err.message;
+    async function startVideo() {
+      try {
+        videoStream = await navigator.mediaDevices.getUserMedia({ video: true });
+        video.srcObject = videoStream;
+        video.play();
+        intervalId = setInterval(captureFrame, 10000); // every 10 seconds
+        captureFrame(); // initial capture
+      } catch (e) {
+        resultsDiv.textContent = "Webcam error: " + e.message;
+      }
     }
-  }
 
-  function stopVideoStream() {
-    if (intervalId) clearInterval(intervalId);
-    if (videoStream) {
-      videoStream.getTracks().forEach(track => track.stop());
+    function stopVideo() {
+      clearInterval(intervalId);
+      if (videoStream) videoStream.getTracks().forEach(t => t.stop());
       videoStream = null;
-    }
-    preview.src = "";
-  }
-
-  function captureFrameFromVideo() {
-    if (!video.videoWidth || !video.videoHeight) return;
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    const ctx = canvas.getContext("2d");
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    const dataUrl = canvas.toDataURL("image/jpeg");
-    preview.src = dataUrl;
-    sendToRoboflow(dataUrl, parseFloat(confidenceSlider.value));
-  }
-
-  function clearResults() {
-    resultsDiv.textContent = "";
-    preview.src = "";
-  }
-
-  function sendToRoboflow(dataUrl, confidence) {
-    resultsDiv.textContent = "Detecting...";
-    const base64Data = dataUrl.replace(/^data:image\/\w+;base64,/, "");
-
-    fetch(`${API_URL}?api_key=${API_KEY}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: base64Data
-    })
-    .then(res => res.json())
-    .then(json => displayResults(json, confidence))
-    .catch(err => resultsDiv.textContent = "Error: " + err.message);
-  }
-
-  function displayResults(data, confidence) {
-    const predictions = (data.predictions || []).filter(p => p.confidence >= confidence);
-
-    if (!predictions.length) {
-      resultsDiv.innerHTML = `<strong>No dice detected (threshold: ${confidence})</strong>`;
-      return;
+      clearCanvas();
     }
 
-    let total = 0;
-    let rolls = predictions.map(p => {
-      const val = parseInt(p.class, 10);
-      total += val;
-      return val;
-    });
+    function captureFrame() {
+      if (!video.videoWidth) return;
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(video, 0, 0);
+      const dataUrl = canvas.toDataURL("image/jpeg");
+      preview.src = dataUrl;
+      invokeWorkflow(dataUrl);
+    }
 
-    resultsDiv.innerHTML = `
-      <strong>Confidence threshold:</strong> ${confidence}<br>
-      <strong>Dice detected:</strong> ${rolls.length}<br>
-      <strong>Total sum:</strong> ${total}<br>
-      <strong>Individual rolls:</strong> ${rolls.join(", ")}
-    `;
-  }
-</script>
+    function drawOnCanvas(dataUrl, cb) {
+      const img = new Image();
+      img.onload = () => {
+        canvas.width = img.width;
+        canvas.height = img.height;
+        canvas.style.display = "block";
+        img.style.display = "none";
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0);
+        cb();
+      };
+      img.src = dataUrl;
+    }
 
+    function clearCanvas() {
+      canvas.style.display = "none";
+      preview.src = "";
+      const ctx = canvas.getContext("2d");
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      resultsDiv.textContent = "";
+    }
+
+    async function invokeWorkflow(dataUrl) {
+      resultsDiv.textContent = "Detecting...";
+      const b64 = dataUrl.replace(/^data:image\/\w+;base64,/, "");
+      const payload = {
+        api_key: API_KEY,
+        inputs: { image: b64 }
+      };
+      try {
+        const res = await fetch(API_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        const out = await res.json();
+        const preds = out.outputs?.[0]?.predictions || [];
+        display(preds);
+      } catch (e) {
+        resultsDiv.textContent = "Workflow error: " + e.message;
+      }
+    }
+
+    function display(preds) {
+      const conf = parseFloat(confidenceSlider.value);
+      const filt = preds.filter(p => p.confidence >= conf);
+      const ctx = canvas.getContext("2d");
+      const rolls = filt.map(p => {
+        const v = parseInt(p.class,10); return v;
+      });
+      ctx.strokeStyle="lime"; ctx.lineWidth=2;
+      ctx.font="16px sans-serif"; ctx.fillStyle="lime";
+      filt.forEach(p => {
+        const x0=p.x-p.width/2, y0=p.y-p.height/2;
+        ctx.strokeRect(x0,y0,p.width,p.height);
+        ctx.fillText(p.class + " "+Math.round(p.confidence*100)+"%", x0, y0-5);
+      });
+      const total = rolls.reduce((a,b)=>a+b,0);
+      resultsDiv.innerHTML = `
+        Dice: ${rolls.length} · Total: ${total} · Rolls: ${rolls.join(", ")}
+      `;
+    }
+
+    function hide(el){ el.style.display="none"; }
+    function show(el){ el.style.display="block"; }
+  </script>
 </body>
 </html>

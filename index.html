@@ -2,14 +2,14 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<title>DiceStat Video + Image Detection with Workflow</title>
+<title>DiceStat Video + Image Detection</title>
 <style>
   body { font-family: sans-serif; padding: 2em; max-width: 600px; margin: auto; }
   video, canvas, img { max-width: 100%; margin-top: 1em; }
   #results { margin-top: 1em; font-weight: bold; }
   label { display: block; margin-top: 1em; }
   #confidenceValue { font-weight: normal; }
-  #canvas { border: 1px solid #ccc; }
+  #canvas { position: relative; }
 </style>
 </head>
 <body>
@@ -29,7 +29,7 @@
 </div>
 
 <canvas id="canvas" style="display:none;"></canvas>
-<img id="preview" alt="Preview Image" style="display:none;" />
+<img id="preview" alt="Preview Image" style="display:none;"/>
 
 <label>
   Confidence threshold: <span id="confidenceValue">0.25</span>
@@ -39,7 +39,7 @@
 <div id="results"></div>
 
 <script>
-  const API_URL = "https://serverless.roboflow.com/infer/workflows/dicestat-d6/dicecounter-v01";
+  const API_URL = "https://infer.roboflow.com/dicestat-d6/dicecounter-v01";
   const API_KEY = "hcMpxDXEVyytWxlYcR00";
 
   const modeRadios = document.querySelectorAll('input[name="mode"]');
@@ -56,45 +56,53 @@
   let videoStream = null;
   let intervalId = null;
 
+  // Mode toggle
   modeRadios.forEach(radio => {
     radio.addEventListener("change", () => {
       if (radio.value === "upload" && radio.checked) {
         stopVideoStream();
         uploadSection.style.display = "block";
         videoSection.style.display = "none";
-        preview.style.display = "none";
+        canvas.style.display = "none";
+        preview.style.display = "block";
         clearResults();
       } else if (radio.value === "video" && radio.checked) {
         uploadSection.style.display = "none";
         videoSection.style.display = "block";
         preview.style.display = "none";
+        canvas.style.display = "block";
         startVideoStream();
         clearResults();
       }
     });
   });
 
+  // Confidence slider update
   confidenceSlider.addEventListener("input", () => {
     confidenceValue.textContent = confidenceSlider.value;
   });
 
+  // Upload image handler
   uploadInput.addEventListener("change", () => {
     if (!uploadInput.files[0]) return;
     const reader = new FileReader();
     reader.onloadend = () => {
-      preview.style.display = "block";
       preview.src = reader.result;
-      drawAndSend(reader.result, parseFloat(confidenceSlider.value));
+      preview.style.display = "block";
+      canvas.style.display = "none";
+      sendToRoboflow(reader.result, parseFloat(confidenceSlider.value));
     };
     reader.readAsDataURL(uploadInput.files[0]);
   });
 
+  // Start webcam
   async function startVideoStream() {
     try {
       videoStream = await navigator.mediaDevices.getUserMedia({ video: true });
       video.srcObject = videoStream;
       video.play();
 
+      // Capture every 10 seconds
       intervalId = setInterval(captureFrameFromVideo, 10000);
     } catch (err) {
       resultsDiv.textContent = "Error accessing webcam: " + err.message;
@@ -110,9 +118,11 @@
       videoStream.getTracks().forEach(track => track.stop());
       videoStream = null;
     }
-    preview.style.display = "none";
+    preview.src = "";
+    canvas.style.display = "none";
   }
 
+  // Capture frame from video and send to Roboflow
   function captureFrameFromVideo() {
     if (!video.videoWidth || !video.videoHeight) return;
     canvas.width = video.videoWidth;
@@ -120,83 +130,77 @@
     const ctx = canvas.getContext("2d");
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     const dataUrl = canvas.toDataURL("image/jpeg");
-    preview.style.display = "block";
-    preview.src = dataUrl;
-    drawAndSend(dataUrl, parseFloat(confidenceSlider.value));
+    sendToRoboflow(dataUrl, parseFloat(confidenceSlider.value));
   }
 
+  // Clear results display
   function clearResults() {
     resultsDiv.textContent = "";
-    const ctx = canvas.getContext("2d");
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    // Clear canvas too
+    if (canvas.style.display !== "none") {
+      const ctx = canvas.getContext("2d");
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
   }
 
-  // Draw bounding boxes and send image to Roboflow
-  function drawAndSend(dataUrl, confidence) {
+  // Send base64 image to Roboflow Hosted API (GET request)
+  function sendToRoboflow(dataUrl, confidence) {
     resultsDiv.textContent = "Detecting...";
     const base64Data = dataUrl.replace(/^data:image\/\w+;base64,/, "");
+    const url = `${API_URL}?api_key=${API_KEY}&confidence=${confidence}&image=${encodeURIComponent(base64Data)}`;
 
-    fetch(`${API_URL}?api_key=${API_KEY}&confidence=${confidence}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: base64Data
-    })
-    .then(res => res.json())
-    .then(json => {
-      if (json.message) {
-        resultsDiv.textContent = "Error: " + json.message;
-        return;
-      }
-      drawBoxes(json);
-      displayResults(json, confidence);
-    })
-    .catch(err => {
-      resultsDiv.textContent = "Error: " + err.message;
+    fetch(url)
+      .then(res => {
+        if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+        return res.json();
+      })
+      .then(json => {
+        if (json.message) {
+          resultsDiv.textContent = "Error: " + json.message;
+          return;
+        }
+        drawBoxes(json);
+        displayResults(json, confidence);
+      })
+      .catch(err => {
+        resultsDiv.textContent = "Error: " + err.message;
+      });
+  }
+
+  // Draw bounding boxes on canvas with dice number labels
+  function drawBoxes(data) {
+    if (canvas.style.display === "none") return;
+    const ctx = canvas.getContext("2d");
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    if (!data.predictions || data.predictions.length === 0) return;
+
+    ctx.lineWidth = 3;
+    ctx.font = "20px Arial";
+    ctx.strokeStyle = "red";
+    ctx.fillStyle = "red";
+
+    data.predictions.forEach(pred => {
+      // Bounding box coordinates in pixels
+      const x = pred.x - pred.width / 2;
+      const y = pred.y - pred.height / 2;
+      const w = pred.width;
+      const h = pred.height;
+
+      // Draw rectangle
+      ctx.beginPath();
+      ctx.rect(x, y, w, h);
+      ctx.stroke();
+
+      // Draw detected dice number as label
+      ctx.fillText(pred.class, x + 5, y + 20);
     });
   }
 
-  // Draw bounding boxes on canvas over the image
-  function drawBoxes(data) {
-    const predictions = data.predictions || [];
-    if (predictions.length === 0) {
-      resultsDiv.innerHTML = "<strong>No dice detected.</strong>";
-      return;
-    }
-
-    const ctx = canvas.getContext("2d");
-    const img = new Image();
-
-    img.onload = () => {
-      canvas.width = img.width;
-      canvas.height = img.height;
-      canvas.style.display = "block";
-
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(img, 0, 0);
-
-      ctx.lineWidth = 3;
-      ctx.font = "18px Arial";
-      ctx.textBaseline = "top";
-
-      predictions.forEach(pred => {
-        const { x, y, width, height } = pred.bounding_box;
-        const conf = pred.confidence.toFixed(2);
-        const label = pred.class;
-
-        ctx.strokeStyle = "red";
-        ctx.fillStyle = "red";
-
-        ctx.strokeRect(x, y, width, height);
-        ctx.fillText(`${label} (${conf})`, x, y - 20 < 0 ? y + 5 : y - 20);
-      });
-    };
-
-    img.src = preview.src;
-  }
-
+  // Display detection results summary
   function displayResults(data, confidence) {
     const predictions = data.predictions || [];
-    if (predictions.length === 0) {
+    if (!predictions.length) {
       resultsDiv.innerHTML = `<strong>No dice detected (threshold: ${confidence})</strong>`;
       return;
     }

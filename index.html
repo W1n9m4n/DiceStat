@@ -1,16 +1,16 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <title>DiceStat Video + Image Detection</title>
-  <style>
-    body { font-family: sans-serif; padding: 2em; max-width: 700px; margin: auto; }
-    video, canvas, img { max-width: 100%; margin-top: 1em; }
-    #results { margin-top: 1em; font-weight: bold; }
-    label { display: block; margin-top: 1em; }
-    #confidenceValue { font-weight: normal; }
-    canvas { position: relative; }
-  </style>
+<meta charset="UTF-8" />
+<title>DiceStat Video + Image Detection with Workflow</title>
+<style>
+  body { font-family: sans-serif; padding: 2em; max-width: 600px; margin: auto; }
+  video, canvas, img { max-width: 100%; margin-top: 1em; }
+  #results { margin-top: 1em; font-weight: bold; }
+  label { display: block; margin-top: 1em; }
+  #confidenceValue { font-weight: normal; }
+  #canvas { border: 1px solid #ccc; }
+</style>
 </head>
 <body>
 
@@ -29,7 +29,7 @@
 </div>
 
 <canvas id="canvas" style="display:none;"></canvas>
-<canvas id="outputCanvas"></canvas>
+<img id="preview" alt="Preview Image" style="display:none;" />
 
 <label>
   Confidence threshold: <span id="confidenceValue">0.25</span>
@@ -39,7 +39,7 @@
 <div id="results"></div>
 
 <script>
-  const API_URL = "https://infer.roboflow.com/dicestat-d6/dicecounter-v01";
+  const API_URL = "https://serverless.roboflow.com/infer/workflows/dicestat-d6/dicecounter-v01";
   const API_KEY = "hcMpxDXEVyytWxlYcR00";
 
   const modeRadios = document.querySelectorAll('input[name="mode"]');
@@ -48,7 +48,7 @@
   const uploadInput = document.getElementById("uploadInput");
   const video = document.getElementById("video");
   const canvas = document.getElementById("canvas");
-  const outputCanvas = document.getElementById("outputCanvas");
+  const preview = document.getElementById("preview");
   const resultsDiv = document.getElementById("results");
   const confidenceSlider = document.getElementById("confidenceSlider");
   const confidenceValue = document.getElementById("confidenceValue");
@@ -56,39 +56,39 @@
   let videoStream = null;
   let intervalId = null;
 
-  // Mode toggle
   modeRadios.forEach(radio => {
     radio.addEventListener("change", () => {
       if (radio.value === "upload" && radio.checked) {
         stopVideoStream();
         uploadSection.style.display = "block";
         videoSection.style.display = "none";
+        preview.style.display = "none";
         clearResults();
       } else if (radio.value === "video" && radio.checked) {
         uploadSection.style.display = "none";
         videoSection.style.display = "block";
+        preview.style.display = "none";
         startVideoStream();
         clearResults();
       }
     });
   });
 
-  // Confidence slider update
   confidenceSlider.addEventListener("input", () => {
     confidenceValue.textContent = confidenceSlider.value;
   });
 
-  // Upload image handler
   uploadInput.addEventListener("change", () => {
     if (!uploadInput.files[0]) return;
     const reader = new FileReader();
     reader.onloadend = () => {
-      drawImageToCanvas(reader.result);
+      preview.style.display = "block";
+      preview.src = reader.result;
+      drawAndSend(reader.result, parseFloat(confidenceSlider.value));
     };
     reader.readAsDataURL(uploadInput.files[0]);
   });
 
-  // Start webcam
   async function startVideoStream() {
     try {
       videoStream = await navigator.mediaDevices.getUserMedia({ video: true });
@@ -110,40 +110,29 @@
       videoStream.getTracks().forEach(track => track.stop());
       videoStream = null;
     }
-    clearResults();
+    preview.style.display = "none";
   }
 
   function captureFrameFromVideo() {
     if (!video.videoWidth || !video.videoHeight) return;
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
-    canvas.getContext("2d").drawImage(video, 0, 0);
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     const dataUrl = canvas.toDataURL("image/jpeg");
-    drawImageToCanvas(dataUrl);
+    preview.style.display = "block";
+    preview.src = dataUrl;
+    drawAndSend(dataUrl, parseFloat(confidenceSlider.value));
   }
 
   function clearResults() {
     resultsDiv.textContent = "";
-    outputCanvas.getContext("2d").clearRect(0, 0, outputCanvas.width, outputCanvas.height);
+    const ctx = canvas.getContext("2d");
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
   }
 
-  function drawImageToCanvas(dataUrl) {
-    const img = new Image();
-    img.onload = () => {
-      canvas.width = img.width;
-      canvas.height = img.height;
-      outputCanvas.width = img.width;
-      outputCanvas.height = img.height;
-
-      canvas.getContext("2d").drawImage(img, 0, 0);
-      outputCanvas.getContext("2d").drawImage(img, 0, 0);
-
-      sendToRoboflow(dataUrl, parseFloat(confidenceSlider.value));
-    };
-    img.src = dataUrl;
-  }
-
-  function sendToRoboflow(dataUrl, confidence) {
+  // Draw bounding boxes and send image to Roboflow
+  function drawAndSend(dataUrl, confidence) {
     resultsDiv.textContent = "Detecting...";
     const base64Data = dataUrl.replace(/^data:image\/\w+;base64,/, "");
 
@@ -154,54 +143,69 @@
     })
     .then(res => res.json())
     .then(json => {
-      let predictions = [];
-
-      try {
-        if (Array.isArray(json.outputs) && json.outputs.length > 0) {
-          predictions = json.outputs[0].predictions || [];
-        }
-      } catch (e) {
-        console.error("Could not parse predictions from workflow output", e);
+      if (json.message) {
+        resultsDiv.textContent = "Error: " + json.message;
+        return;
       }
-
-      displayResults(predictions, confidence);
+      drawBoxes(json);
+      displayResults(json, confidence);
     })
     .catch(err => {
       resultsDiv.textContent = "Error: " + err.message;
     });
   }
 
-  function displayResults(predictions, confidence) {
-    if (!predictions || !predictions.length) {
+  // Draw bounding boxes on canvas over the image
+  function drawBoxes(data) {
+    const predictions = data.predictions || [];
+    if (predictions.length === 0) {
+      resultsDiv.innerHTML = "<strong>No dice detected.</strong>";
+      return;
+    }
+
+    const ctx = canvas.getContext("2d");
+    const img = new Image();
+
+    img.onload = () => {
+      canvas.width = img.width;
+      canvas.height = img.height;
+      canvas.style.display = "block";
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0);
+
+      ctx.lineWidth = 3;
+      ctx.font = "18px Arial";
+      ctx.textBaseline = "top";
+
+      predictions.forEach(pred => {
+        const { x, y, width, height } = pred.bounding_box;
+        const conf = pred.confidence.toFixed(2);
+        const label = pred.class;
+
+        ctx.strokeStyle = "red";
+        ctx.fillStyle = "red";
+
+        ctx.strokeRect(x, y, width, height);
+        ctx.fillText(`${label} (${conf})`, x, y - 20 < 0 ? y + 5 : y - 20);
+      });
+    };
+
+    img.src = preview.src;
+  }
+
+  function displayResults(data, confidence) {
+    const predictions = data.predictions || [];
+    if (predictions.length === 0) {
       resultsDiv.innerHTML = `<strong>No dice detected (threshold: ${confidence})</strong>`;
       return;
     }
 
-    const ctx = outputCanvas.getContext("2d");
-    ctx.font = "16px Arial";
-    ctx.strokeStyle = "red";
-    ctx.fillStyle = "yellow";
-    ctx.lineWidth = 2;
-
     let total = 0;
-    let rolls = [];
-
-    predictions.forEach(pred => {
-      const val = parseInt(pred.class, 10);
-      if (!isNaN(val)) {
-        total += val;
-        rolls.push(val);
-      }
-
-      const x = pred.x - pred.width / 2;
-      const y = pred.y - pred.height / 2;
-      const w = pred.width;
-      const h = pred.height;
-
-      ctx.beginPath();
-      ctx.rect(x, y, w, h);
-      ctx.stroke();
-      ctx.fillText(pred.class, x + 4, y + 16);
+    let rolls = predictions.map(p => {
+      const val = parseInt(p.class, 10);
+      total += val;
+      return val;
     });
 
     resultsDiv.innerHTML = `
